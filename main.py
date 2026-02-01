@@ -23,9 +23,32 @@ import random
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import certifi
+import pyrogram.utils  # اضافه شده برای پچ کردن ارور ID
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+
+# =======================================================
+# 🛠 FIX: Monkey Patch for Peer ID Validation
+# =======================================================
+# این بخش خطای Peer id invalid را برای کانال‌های جدید تلگرام رفع می‌کند
+def patch_peer_id_validation():
+    original_get_peer_type = pyrogram.utils.get_peer_type
+
+    def patched_get_peer_type(peer_id: int) -> str:
+        try:
+            return original_get_peer_type(peer_id)
+        except ValueError:
+            # اگر پایروگرام نتوانست ID را تشخیص دهد، فرمت جدید را بررسی می‌کنیم
+            if str(peer_id).startswith("-100"):
+                return "channel"
+            # می‌توانیم برای یوزرهای 64 بیتی هم شرط اضافه کنیم اگر نیاز شد
+            raise
+
+    pyrogram.utils.get_peer_type = patched_get_peer_type
+    logging.info("Pyrogram peer ID validation patched successfully.")
+
+patch_peer_id_validation()
 
 # =======================================================
 # ⚠️ Main Settings
@@ -422,7 +445,8 @@ async def phone_received_handler(client, message):
     
     msg = await message.reply_text("⏳ در حال اتصال به سرور تلگرام...", reply_markup=ReplyKeyboardRemove())
     
-    user_client = Client(f"login_{chat_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    # ⚠️ FIXED: no_updates=True prevents crashing on unknown peers during login
+    user_client = Client(f"login_{chat_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, no_updates=True)
     await user_client.connect()
     
     try:

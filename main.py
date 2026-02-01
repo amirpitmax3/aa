@@ -117,9 +117,9 @@ HELP_TEXT = """
 > » `فونت [عدد]` 🔢
 >    *تغییر سریع فونت (مثال: `فونت 3`)*
 >
-> **🆔 مدیریت یوزرنیم (شکارچی رندوم)**
+> **🆔 مدیریت یوزرنیم (شکارچی فقط حروف)**
 > » `حرف [تعداد]` 🎯
->    *شکار یوزرنیم رندوم (حروف و اعداد) (مثال: `حرف 5`)*
+>    *شکار یوزرنیم رندوم (فقط حروف انگلیسی) (مثال: `حرف 5`)*
 > » `لغو حرف` 🚫
 >    *توقف عملیات شکار*
 >
@@ -211,8 +211,8 @@ ALREADY_ADDED_HISTORY = {} # {user_id: set(added_user_ids)} -> برای جلوگ
 # --- New Variables for Username Sniper ---
 USERNAME_SNIPER_ACTIVE = {} # {user_id: bool}
 USERNAME_SNIPER_TASK = {} # {user_id: asyncio.Task}
-# لیست کاراکترهای رندوم (حروف + عدد + آندرلاین)
-USERNAME_CHARS_ALL = string.ascii_lowercase + string.digits + "_"
+# لیست کاراکترهای رندوم (فقط حروف انگلیسی - بدون عدد و آندرلاین)
+USERNAME_CHARS_LETTERS = string.ascii_lowercase
 
 EVENT_LOOP = asyncio.new_event_loop()
 ACTIVE_CLIENTS = {}
@@ -1058,14 +1058,14 @@ async def status_add_controller(client, message):
     if not status:
         await message.edit_text("ℹ️ عملیاتی فعال نیست.")
         return
-    text = (f"📊 **وضعیت:**\n👥 کل: `{status['total']}`\n✅ موفق: `{status['added']}`\n⏭ رد شده: `{status['skipped']}`\n🚫 خطا: `{status['errors']}`\n🔄 وضعیت: {'فعال' if status['active'] else 'متوقف'}")
+    text = (f"📊 **وضعیت:**\n👥 کل: `{status['total']}`\n✅ موفق: `{status['added']}`\n⏭ رد شده/تکراری: `{status['skipped']}`\n🚫 خطا: `{status['errors']}`\n🔄 وضعیت: {'فعال' if status['active'] else 'متوقف'}")
     await message.edit_text(text)
 
 
 # --- Username Sniper Logic (Back to Random) ---
 def generate_random_username(length):
     # تولید یوزرنیم کاملا رندوم (حروف + عدد + _)
-    return ''.join(random.choices(USERNAME_CHARS_ALL, k=length))
+    return ''.join(random.choices(USERNAME_CHARS_NO_DIGITS, k=length))
 
 async def username_sniper_task(client, user_id, length):
     logging.info(f"Sniper (Random) started for {user_id}, len {length}")
@@ -1110,7 +1110,7 @@ async def username_sniper_controller(client, message):
         USERNAME_SNIPER_ACTIVE[user_id] = True
         task = asyncio.create_task(username_sniper_task(client, user_id, length))
         USERNAME_SNIPER_TASK[user_id] = task
-        await message.edit_text(f"🎯 **شکارچی فعال شد (رندوم).**\nطول: {length}")
+        await message.edit_text(f"🎯 **شکارچی فعال شد (رندوم - بدون عدد).**\nطول: {length}")
     except ValueError:
         await message.edit_text("⚠️ دستور اشتباه.")
 

@@ -123,11 +123,11 @@ HELP_TEXT = """
 > » `لغو حرف` 🚫
 >    *توقف عملیات شکار*
 >
-> **👥 مدیریت ممبر (نسخه پرسرعت و دقیق)**
+> **👥 مدیریت ممبر (نسخه ایمن و دقیق)**
 > » `استخراج [تعداد]` 📥
 >    *استخراج ممبرهای فعال (چت‌کنندگان) به تعداد دقیق*
 > » `افزودن` ➕
->    *شروع افزودن ممبرهای جدید (با سرعت بالا)*
+>    *شروع افزودن ممبرهای جدید (با وقفه ۱۰-۲۰ ثانیه)*
 > » `وضعیت` 📊
 >    *نمایش آمار دقیق (موفق، خطا، تکراری)*
 > » `توقف افزودن` 🛑
@@ -907,27 +907,37 @@ async def scrape_members_controller(client, message):
         
         collected_users = set()
         
-        try:
-            async for member in client.get_chat_members(message.chat.id, limit=count):
-                if not member.user.is_bot and not member.user.is_deleted and not member.user.is_self: # Added is_self check
-                    target = member.user.username if member.user.username else member.user.id
-                    collected_users.add(target)
-        except Exception: pass
-            
+        # 1. First Priority: Chat History (Active Users)
+        # Try to gather `count` unique users from history first
+        logging.info(f"Scraping from history for user {user_id}, target: {count}")
+        async for msg in client.get_chat_history(message.chat.id, limit=count * 3): # Scan 3x messages to find enough unique users
+            if msg.from_user and not msg.from_user.is_bot and not msg.from_user.is_deleted and not msg.from_user.is_self:
+                target = msg.from_user.username if msg.from_user.username else msg.from_user.id
+                collected_users.add(target)
+                if len(collected_users) >= count:
+                    break
+        
+        # 2. Second Priority: Member List (Only if history didn't provide enough)
         if len(collected_users) < count:
+            logging.info(f"History not enough ({len(collected_users)} found), trying member list...")
             try:
-                history_limit = count * 2 
-                async for msg in client.get_chat_history(message.chat.id, limit=history_limit):
-                    if msg.from_user and not msg.from_user.is_bot and not msg.from_user.is_deleted and not msg.from_user.is_self: # Added is_self check
-                        target = msg.from_user.username if msg.from_user.username else msg.from_user.id
+                async for member in client.get_chat_members(message.chat.id, limit=count):
+                    if not member.user.is_bot and not member.user.is_deleted and not member.user.is_self:
+                        target = member.user.username if member.user.username else member.user.id
                         collected_users.add(target)
-                        if len(collected_users) >= count: break
-            except Exception: pass
+                        if len(collected_users) >= count:
+                            break
+            except Exception:
+                pass # Member list might be hidden
 
         final_list = list(collected_users)[:count]
         SCRAPED_MEMBERS[user_id] = final_list
+        # Reset counters for fresh start
         ADD_PROCESS_STATUS[user_id] = {"total": len(final_list), "added": 0, "errors": 0, "skipped": 0, "active": False}
-        logging.info(f"User {user_id} scraped {len(final_list)} members.")
+        
+        await client.send_message("me", f"✅ **استخراج انجام شد!**\n👥 تعداد: `{len(final_list)}` نفر (فعال/عضو)\nآماده برای افزودن.")
+        logging.info(f"User {user_id} scraped {len(final_list)} unique members.")
+        
     except Exception as e:
         logging.error(f"Error scrape: {e}")
 
@@ -940,13 +950,15 @@ async def adder_task(client, chat_id, user_id, members_to_add):
     for member in members_to_add:
         if not ADD_PROCESS_STATUS[user_id]["active"]: break
         member_key = str(member)
+        
         if member_key in ALREADY_ADDED_HISTORY[user_id]:
             ADD_PROCESS_STATUS[user_id]["skipped"] += 1
             continue 
 
-        # استراحت ایمنی: هر ۲۰ نفر یک استراحت کوتاه ۵ تا ۱۰ ثانیه‌ای
-        if processed_count > 0 and processed_count % 20 == 0:
-             await asyncio.sleep(random.uniform(5, 10))
+        # استراحت ایمنی: هر ۱۰ نفر یک استراحت طولانی‌تر (۳۰ تا ۶۰ ثانیه) برای امنیت بیشتر
+        if processed_count > 0 and processed_count % 10 == 0:
+             logging.info(f"Safety sleep for user {user_id}...")
+             await asyncio.sleep(random.uniform(30, 60))
 
         try:
             await client.add_chat_members(chat_id, member)
@@ -954,31 +966,35 @@ async def adder_task(client, chat_id, user_id, members_to_add):
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
             consecutive_privacy_errors = 0 
         except (UserPrivacyRestricted, UserNotMutualContact, PeerIdInvalid, UserChannelsTooMuch, UserKicked, UserBannedInChannel, ChatAdminRequired, ChatWriteForbidden, UserAlreadyParticipant):
-            # این‌ها خطاهای واقعی یا تکراری هستند، نباید به عنوان موفق شمرده شوند
-            # اگر کاربر تکراری باشد (UserAlreadyParticipant)، در اینجا به عنوان خطا/رد شده حساب می‌شود
+            # این‌ها خطاهای واقعی هستند، نباید به عنوان موفق شمرده شوند
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
             consecutive_privacy_errors += 1
         except PeerFlood:
             logging.warning(f"PeerFlood for {user_id}. Stopping.")
             ADD_PROCESS_STATUS[user_id]["active"] = False
+            await client.send_message("me", "🚫 **عملیات افزودن متوقف شد!**\n\n⚠️ اکانت شما توسط تلگرام محدود (ریپورت) شده است.\n⛔️ در این وضعیت امکان **افزودن ممبر** و **پیام به پیوی ناشناس** وجود ندارد.\n✅ اما احتمالاً در گروه‌ها همچنان می‌توانید پیام ارسال کنید.\n⏳ لطفاً مدتی صبر کنید (چند ساعت یا چند روز).")
             break
         except FloodWait as e:
-            await asyncio.sleep(e.value + 5)
-        except Exception:
+            logging.warning(f"FloodWait {e.value}s for {user_id}")
+            await asyncio.sleep(e.value + 10)
+            # Retry mechanism could be complex here, usually safer to skip or wait long
+        except Exception as e:
+            logging.error(f"Adder error: {e}")
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
         
         processed_count += 1
+        
         if consecutive_privacy_errors >= 5:
-             # اگر ۵ خطا پشت سر هم بود، کمی صبر کن
-             await asyncio.sleep(random.uniform(5, 10))
+             await asyncio.sleep(random.uniform(20, 40))
              consecutive_privacy_errors = 0 
         
-        # سرعت بسیار بالا: ۱.۵ تا ۳.۵ ثانیه وقفه
-        await asyncio.sleep(random.uniform(1.5, 3.5))
+        # تاخیر بین هر اد: ۱۰ تا ۲۰ ثانیه (درخواست کاربر)
+        await asyncio.sleep(random.uniform(10, 20))
     
     ADD_PROCESS_STATUS[user_id]["active"] = False
+    await client.send_message("me", "🏁 **عملیات افزودن پایان یافت.**")
 
 
 async def add_members_controller(client, message):
@@ -992,6 +1008,7 @@ async def add_members_controller(client, message):
         members = SCRAPED_MEMBERS[user_id]
         task = asyncio.create_task(adder_task(client, chat_id, user_id, members))
         ADD_TASKS[user_id] = task
+        await client.send_message("me", f"🚀 **افزودن شروع شد!**\nتعداد هدف: {len(members)}\n⚠️ سرعت: ۱۰ تا ۲۰ ثانیه (برای امنیت)")
     except Exception: pass
 
 async def stop_add_controller(client, message):

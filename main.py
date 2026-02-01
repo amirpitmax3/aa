@@ -6,9 +6,13 @@ import aiohttp
 import time
 from urllib.parse import quote
 from pyrogram import Client, filters, idle
-from pyrogram.handlers import MessageHandler
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler, InlineQueryHandler
 from pyrogram.enums import ChatType, ChatAction
-from pyrogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from pyrogram.types import (
+    Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    InlineQueryResultArticle, InputTextMessageContent, InlineQueryResultPhoto
+)
 from pyrogram.raw import functions
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
@@ -54,6 +58,7 @@ API_ID = 28190856
 API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 
 # 🔴🔴🔴 توکن ربات منیجر 🔴🔴🔴
+# حتما در BotFather برای این ربات /setinline را فعال کنید
 BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
 
 # --- Database Setup (MongoDB) ---
@@ -102,53 +107,41 @@ CLOCK_CHARS_REGEX_CLASS = f"[{re.escape(ALL_CLOCK_CHARS)}]"
 
 # --- Feature Variables ---
 ENEMY_REPLIES = [] 
-
 SECRETARY_REPLY_MESSAGE = "سلام! در حال حاضر آفلاین هستم و پیام شما را دریافت کردم. در اولین فرصت پاسخ خواهم داد. ممنون از پیامتون."
 
-# --- Modified Help Text (Professional & No Emojis) ---
+# --- Updated Help Text (Only Reply Commands) ---
 HELP_TEXT = """
-**[ 𝗦𝗘𝗟𝗙-𝗕𝗢𝗧 𝗖𝗢𝗡𝗧𝗥𝗢𝗟 𝗣𝗔𝗡𝗘𝗟 ]**
+**[ 🛠 دستورات دستی و ریپلای ]**
 ━━━━━━━━━━━━━━━━━━━━
-**✦ VISUAL & TIME**
-  » `ساعت روشن` | `ساعت خاموش`
-  » `فونت` (مشاهده لیست)
-  » `فونت [1-10]` (تغییر سریع)
+برای استفاده از دکمه‌های کنترلی، دستور **`پنل`** را ارسال کنید.
 
-**✦ MANAGEMENT**
-  » `حذف [تعداد]`
-  » `ذخیره` (روی پیام)
-  » `تکرار [تعداد]` (روی پیام)
-  » `کپی روشن` | `کپی خاموش` (روی کاربر)
+**✦ مدیریت پیام و چت**
+  » `حذف [تعداد]` 
+  » `ذخیره` (ریپلای روی پیام)
+  » `تکرار [تعداد]` (ریپلای روی پیام)
+  » `کپی روشن` | `کپی خاموش` (ریپلای روی کاربر)
 
-**✦ SECURITY & PRIVACY**
-  » `پیوی قفل` | `پیوی باز`
-  » `منشی روشن` | `منشی خاموش`
-  » `انتی لوگین روشن` | `خاموش`
-  » `سین روشن` | `سین خاموش`
-
-**✦ DEFENSE SYSTEM**
-  » `دشمن روشن` | `خاموش` (روی کاربر)
-  » `دشمن همگانی روشن` | `خاموش`
+**✦ دفاعی و امنیتی**
+  » `دشمن روشن` | `خاموش` (ریپلای روی کاربر)
   » `لیست دشمن`
-  » `بلاک روشن` | `بلاک خاموش` (روی کاربر)
-  » `سکوت روشن` | `سکوت خاموش` (روی کاربر)
+  » `بلاک روشن` | `بلاک خاموش` (ریپلای روی کاربر)
+  » `سکوت روشن` | `سکوت خاموش` (ریپلای روی کاربر)
+  » `ریاکشن [شکلک]` | `خاموش` (ریپلای روی کاربر)
 
-**✦ FUN & UTILS**
-  » `تایپ روشن` | `خاموش`
-  » `بازی روشن` | `خاموش`
-  » `ریاکشن [شکلک]` | `خاموش` (روی کاربر)
-  » `تاس` | `تاس [عدد]` | `بولینگ`
+**✦ سرگرمی**
+  » `تاس` | `تاس [عدد]`
+  » `بولینگ`
 
-**✦ TRANSLATOR**
-  » `انگیلیسی روشن` | `خاموش`
-  » `روسی روشن` | `خاموش`
-  » `چینی روشن` | `خاموش`
-  » `بولد روشن` | `خاموش`
+**✦ تنظیمات ظاهری**
+  » `فونت` (لیست فونت‌ها)
+  » `فونت [1-10]` (تغییر فونت ساعت)
+  » `تنظیم عکس` (ریپلای روی عکس برای پنل)
+  » `حذف عکس` (حذف عکس پنل)
 ━━━━━━━━━━━━━━━━━━━━
 """
 
-# --- Updated Regex to include 'انگیلیسی' ---
-COMMAND_REGEX = r"^(راهنما|فونت|فونت \d+|ساعت روشن|ساعت خاموش|بولد روشن|بولد خاموش|دشمن روشن|دشمن خاموش|منشی روشن|منشی خاموش|بلاک روشن|بلاک خاموش|سکوت روشن|سکوت خاموش|ذخیره|تکرار \d+|حذف \d+|سین روشن|سین خاموش|ریاکشن .*|ریاکشن خاموش|انگیلیسی روشن|انگیلیسی خاموش|اینگیلیسی روشن|اینگیلیسی خاموش|روسی روشن|روسی خاموش|چینی روشن|چینی خاموش|انتی لوگین روشن|انتی لوگین خاموش|کپی روشن|کپی خاموش|دشمن همگانی روشن|دشمن همگانی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|پیوی قفل|پیوی باز)$"
+# --- Commands Regex ---
+COMMAND_REGEX = r"^(راهنما|فونت|فونت \d+|ذخیره|تکرار \d+|حذف \d+|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تنظیم عکس|حذف عکس|پنل|panel)$"
 
 # --- User Status Management ---
 ACTIVE_ENEMIES = {}
@@ -190,6 +183,26 @@ async def translate_text(text: str, target_lang: str) -> str:
     except Exception as e:
         logging.error(f"Translation failed: {e}")
     return text
+
+def get_panel_photo(user_id):
+    if sessions_collection is not None:
+        # Find session based on user_id context (Assuming start_bot_instance maps it)
+        # Since we don't have user_id -> phone map easily accessible globally without query
+        # We will try to find the document with matching user_id if we stored it, or search via session?
+        # Simpler: We will rely on phone number if possible, but here we only have user_id.
+        # Let's search all documents where we might have stored 'user_id' or just iterate (not efficient but ok for small scale)
+        doc = sessions_collection.find_one({'user_id': user_id})
+        if doc and 'panel_photo' in doc:
+            return doc['panel_photo']
+    return None
+
+def set_panel_photo_db(user_id, file_id):
+    if sessions_collection is not None:
+        sessions_collection.update_one({'user_id': user_id}, {'$set': {'panel_photo': file_id}}, upsert=False)
+
+def del_panel_photo_db(user_id):
+    if sessions_collection is not None:
+        sessions_collection.update_one({'user_id': user_id}, {'$unset': {'panel_photo': ""}})
 
 # --- Background Tasks ---
 async def update_profile_clock(client: Client, user_id: int):
@@ -311,6 +324,7 @@ async def incoming_message_manager(client, message):
 
 # --- Controllers ---
 async def help_controller(client, message): await message.edit_text(HELP_TEXT)
+
 async def font_controller(client, message):
     user_id = client.me.id
     cmd = message.text.split()
@@ -324,45 +338,46 @@ async def font_controller(client, message):
             CLOCK_STATUS[user_id] = True
             await message.edit_text("✅ فونت تغییر کرد.")
 
-async def simple_toggle_controller(client, message):
+async def panel_command_controller(client, message):
+    # This function triggers when user types "panel"
+    try:
+        bot_username = (await manager_bot.get_me()).username
+        results = await client.get_inline_bot_results(bot_username, "panel")
+        if results and results.results:
+            await message.delete()
+            await client.send_inline_bot_result(
+                message.chat.id,
+                results.query_id,
+                results.results[0].id
+            )
+        else:
+            await message.edit_text("❌ خطا: لطفا مطمئن شوید که ربات منیجر روشن است و حالت Inline آن در BotFather فعال شده است.")
+    except Exception as e:
+        await message.edit_text(f"❌ خطا در لود پنل: {e}\n\n⚠️ اطمینان حاصل کنید که ربات منیجر @{bot_username} استارت شده و دسترسی دارد.")
+
+async def photo_setting_controller(client, message):
     user_id = client.me.id
     cmd = message.text
-    # Clock
-    if cmd == "ساعت روشن": CLOCK_STATUS[user_id] = True; await message.edit_text("✅ ساعت روشن شد.")
-    elif cmd == "ساعت خاموش": CLOCK_STATUS[user_id] = False; await message.edit_text("❌ ساعت خاموش شد.")
-    # Privacy
-    elif cmd == "پیوی قفل": PV_LOCK_STATUS[user_id] = True; await message.edit_text("🔒 پیوی قفل شد.")
-    elif cmd == "پیوی باز": PV_LOCK_STATUS[user_id] = False; await message.edit_text("🔓 پیوی باز شد.")
-    elif cmd == "منشی روشن": SECRETARY_MODE_STATUS[user_id] = True; await message.edit_text("✅ منشی فعال شد.")
-    elif cmd == "منشی خاموش": SECRETARY_MODE_STATUS[user_id] = False; USERS_REPLIED_IN_SECRETARY[user_id] = set(); await message.edit_text("❌ منشی غیرفعال شد.")
-    elif cmd == "انتی لوگین روشن": ANTI_LOGIN_STATUS[user_id] = True; await message.edit_text("🚨 محافظت از نشست فعال شد.")
-    elif cmd == "انتی لوگین خاموش": ANTI_LOGIN_STATUS[user_id] = False; await message.edit_text("❌ محافظت از نشست غیرفعال شد.")
-    elif cmd == "سین روشن": AUTO_SEEN_STATUS[user_id] = True; await message.edit_text("👁 سین خودکار روشن.")
-    elif cmd == "سین خاموش": AUTO_SEEN_STATUS[user_id] = False; await message.edit_text("❌ سین خودکار خاموش.")
-    # Status
-    elif cmd == "تایپ روشن": TYPING_MODE_STATUS[user_id] = True; PLAYING_MODE_STATUS[user_id] = False; await message.edit_text("✍️ تایپ فعال شد.")
-    elif cmd == "تایپ خاموش": TYPING_MODE_STATUS[user_id] = False; await message.edit_text("❌ تایپ متوقف شد.")
-    elif cmd == "بازی روشن": PLAYING_MODE_STATUS[user_id] = True; TYPING_MODE_STATUS[user_id] = False; await message.edit_text("🎮 وضعیت بازی فعال شد.")
-    elif cmd == "بازی خاموش": PLAYING_MODE_STATUS[user_id] = False; await message.edit_text("❌ وضعیت بازی متوقف شد.")
-    # Translate (Updated to support both spellings)
-    elif cmd in ["انگیلیسی روشن", "اینگیلیسی روشن"]: AUTO_TRANSLATE_TARGET[user_id] = "en"; await message.edit_text("🇺🇸 ترجمه انگلیسی فعال شد.")
-    elif cmd in ["انگیلیسی خاموش", "اینگیلیسی خاموش"]: AUTO_TRANSLATE_TARGET[user_id] = None; await message.edit_text("❌ ترجمه خاموش شد.")
-    elif cmd == "روسی روشن": AUTO_TRANSLATE_TARGET[user_id] = "ru"; await message.edit_text("🇷🇺 ترجمه روسی فعال شد.")
-    elif cmd == "روسی خاموش": AUTO_TRANSLATE_TARGET[user_id] = None; await message.edit_text("❌ ترجمه خاموش شد.")
-    elif cmd == "چینی روشن": AUTO_TRANSLATE_TARGET[user_id] = "zh-CN"; await message.edit_text("🇨🇳 ترجمه چینی فعال شد.")
-    elif cmd == "چینی خاموش": AUTO_TRANSLATE_TARGET[user_id] = None; await message.edit_text("❌ ترجمه خاموش شد.")
-    # Text Style
-    elif cmd == "بولد روشن": BOLD_MODE_STATUS[user_id] = True; await message.edit_text("𝗕 بولد خودکار روشن.")
-    elif cmd == "بولد خاموش": BOLD_MODE_STATUS[user_id] = False; await message.edit_text("❌ بولد خودکار خاموش.")
-    # Global Enemy
-    elif cmd == "دشمن همگانی روشن": GLOBAL_ENEMY_STATUS[user_id] = True; await message.edit_text("⚔️ حالت جنگی فعال شد (پاسخ به همه).")
-    elif cmd == "دشمن همگانی خاموش": GLOBAL_ENEMY_STATUS[user_id] = False; await message.edit_text("🏳️ حالت جنگی غیرفعال شد.")
-    # Games
-    elif cmd == "تاس": await client.send_dice(message.chat.id, "🎲")
+    if cmd == "تنظیم عکس" and message.reply_to_message and message.reply_to_message.photo:
+        photo = message.reply_to_message.photo
+        set_panel_photo_db(user_id, photo.file_id)
+        await message.edit_text("✅ عکس پنل با موفقیت ذخیره شد.")
+    elif cmd == "حذف عکس":
+        del_panel_photo_db(user_id)
+        await message.edit_text("🗑 عکس پنل حذف شد.")
+
+async def reply_based_controller(client, message):
+    user_id = client.me.id
+    cmd = message.text
+    
+    if cmd == "تاس": await client.send_dice(message.chat.id, "🎲")
     elif cmd == "بولینگ": await client.send_dice(message.chat.id, "🎳")
     elif cmd.startswith("تاس "): 
         try: await client.send_dice(message.chat.id, "🎲", reply_to_message_id=message.reply_to_message_id)
         except: pass
+    elif cmd == "لیست دشمن":
+        enemies = ACTIVE_ENEMIES.get(user_id, set())
+        await message.edit_text(f"📜 تعداد دشمنان فعال: {len(enemies)}")
     
     # Reply-based commands
     elif message.reply_to_message:
@@ -406,7 +421,6 @@ async def simple_toggle_controller(client, message):
                     data = ORIGINAL_PROFILE_DATA[user_id]
                     COPY_MODE_STATUS[user_id] = False
                     await client.update_profile(first_name=data.get('first_name'), bio=data.get('bio'))
-                    # Restore photo logic is complex without downloading, skipping for simplicity/safety
                     await message.edit_text("👤 هویت بازگردانده شد.")
             
             elif cmd == "دشمن روشن":
@@ -442,9 +456,6 @@ async def simple_toggle_controller(client, message):
                 if target_id in t: del t[target_id]
                 AUTO_REACTION_TARGETS[user_id] = t
                 await message.edit_text("❌ واکنش خودکار حذف شد.")
-    elif cmd == "لیست دشمن":
-        enemies = ACTIVE_ENEMIES.get(user_id, set())
-        await message.edit_text(f"📜 تعداد دشمنان فعال: {len(enemies)}")
 
 async def start_bot_instance(session_string: str, phone: str, font_style: str, disable_clock: bool = False):
     client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
@@ -452,6 +463,9 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
+        # Update user_id in DB for Photo matching
+        if sessions_collection is not None:
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
     except:
         if sessions_collection is not None: sessions_collection.delete_one({'phone_number': phone})
         return
@@ -471,7 +485,9 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     # Commands
     client.add_handler(MessageHandler(help_controller, filters.me & filters.regex("^راهنما$")))
     client.add_handler(MessageHandler(font_controller, filters.me & filters.regex(r"^(فونت|فونت \d+)$")))
-    client.add_handler(MessageHandler(simple_toggle_controller, filters.me)) 
+    client.add_handler(MessageHandler(panel_command_controller, filters.me & filters.regex(r"^(پنل|panel)$")))
+    client.add_handler(MessageHandler(photo_setting_controller, filters.me & filters.regex(r"^(تنظیم عکس|حذف عکس)$")))
+    client.add_handler(MessageHandler(reply_based_controller, filters.me)) 
     client.add_handler(MessageHandler(enemy_handler, filters.create(lambda _, c, m: (m.from_user.id, m.chat.id) in ACTIVE_ENEMIES.get(c.me.id, set()) or GLOBAL_ENEMY_STATUS.get(c.me.id)) & ~filters.me), group=1)
     client.add_handler(MessageHandler(secretary_auto_reply_handler, filters.private & ~filters.me), group=1)
 
@@ -484,9 +500,131 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     logging.info(f"Bot started for {user_id}")
 
 # =======================================================
-# 🤖 MANAGER BOT LOGIN LOGIC
+# 🤖 MANAGER BOT (LOGIN + PANEL)
 # =======================================================
 manager_bot = Client("manager_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+def generate_panel_markup(user_id):
+    # Check states
+    s_clock = "✅" if CLOCK_STATUS.get(user_id, True) else "❌"
+    s_bold = "✅" if BOLD_MODE_STATUS.get(user_id, False) else "❌"
+    s_sec = "✅" if SECRETARY_MODE_STATUS.get(user_id, False) else "❌"
+    s_seen = "✅" if AUTO_SEEN_STATUS.get(user_id, False) else "❌"
+    s_pv = "🔒" if PV_LOCK_STATUS.get(user_id, False) else "🔓"
+    s_anti = "✅" if ANTI_LOGIN_STATUS.get(user_id, False) else "❌"
+    s_type = "✅" if TYPING_MODE_STATUS.get(user_id, False) else "❌"
+    s_game = "✅" if PLAYING_MODE_STATUS.get(user_id, False) else "❌"
+    s_enemy = "✅" if GLOBAL_ENEMY_STATUS.get(user_id, False) else "❌"
+    
+    t_lang = AUTO_TRANSLATE_TARGET.get(user_id)
+    l_en = "✅" if t_lang == "en" else "❌"
+    l_ru = "✅" if t_lang == "ru" else "❌"
+    l_cn = "✅" if t_lang == "zh-CN" else "❌"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"ساعت {s_clock}", callback_data=f"toggle_clock_{user_id}"),
+         InlineKeyboardButton(f"بولد {s_bold}", callback_data=f"toggle_bold_{user_id}")],
+        
+        [InlineKeyboardButton(f"منشی {s_sec}", callback_data=f"toggle_sec_{user_id}"),
+         InlineKeyboardButton(f"سین {s_seen}", callback_data=f"toggle_seen_{user_id}")],
+         
+        [InlineKeyboardButton(f"پیوی {s_pv}", callback_data=f"toggle_pv_{user_id}"),
+         InlineKeyboardButton(f"انتی لوگین {s_anti}", callback_data=f"toggle_anti_{user_id}")],
+         
+        [InlineKeyboardButton(f"تایپ {s_type}", callback_data=f"toggle_type_{user_id}"),
+         InlineKeyboardButton(f"دشمن همگانی {s_enemy}", callback_data=f"toggle_g_enemy_{user_id}")],
+         
+        [InlineKeyboardButton(f"بازی {s_game}", callback_data=f"toggle_game_{user_id}")],
+
+        [InlineKeyboardButton(f"🇺🇸 انگلیسی {l_en}", callback_data=f"lang_en_{user_id}"),
+         InlineKeyboardButton(f"🇷🇺 روسی {l_ru}", callback_data=f"lang_ru_{user_id}"),
+         InlineKeyboardButton(f"🇨🇳 چینی {l_cn}", callback_data=f"lang_cn_{user_id}")],
+         
+        [InlineKeyboardButton("بستن پنل ❌", callback_data=f"close_panel_{user_id}")]
+    ])
+
+@manager_bot.on_inline_query()
+async def inline_panel_handler(client, query):
+    user_id = query.from_user.id
+    if query.query == "panel":
+        photo_id = get_panel_photo(user_id)
+        
+        if photo_id:
+            result = InlineQueryResultPhoto(
+                photo_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg", # Placeholder required by API but file_id used
+                thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg",
+                photo_file_id=photo_id,
+                title="Self Bot Panel",
+                caption=f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار",
+                reply_markup=generate_panel_markup(user_id)
+            )
+        else:
+            result = InlineQueryResultArticle(
+                title="پنل مدیریت",
+                input_message_content=InputTextMessageContent(
+                    f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"
+                ),
+                reply_markup=generate_panel_markup(user_id),
+                thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg" # Default icon
+            )
+        
+        await query.answer([result], cache_time=0)
+
+@manager_bot.on_callback_query()
+async def callback_panel_handler(client, callback):
+    data = callback.data
+    parts = data.split("_")
+    action = "_".join(parts[:-1]) # everything before last element
+    target_user_id = int(parts[-1])
+    
+    # Validation: Ensure the person clicking owns the panel
+    if callback.from_user.id != target_user_id:
+        await callback.answer("⛔️ این پنل متعلق به شما نیست!", show_alert=True)
+        return
+
+    # Toggles
+    if action == "toggle_clock":
+        CLOCK_STATUS[target_user_id] = not CLOCK_STATUS.get(target_user_id, True)
+    elif action == "toggle_bold":
+        BOLD_MODE_STATUS[target_user_id] = not BOLD_MODE_STATUS.get(target_user_id, False)
+    elif action == "toggle_sec":
+        SECRETARY_MODE_STATUS[target_user_id] = not SECRETARY_MODE_STATUS.get(target_user_id, False)
+        if not SECRETARY_MODE_STATUS[target_user_id]: USERS_REPLIED_IN_SECRETARY[target_user_id] = set()
+    elif action == "toggle_seen":
+        AUTO_SEEN_STATUS[target_user_id] = not AUTO_SEEN_STATUS.get(target_user_id, False)
+    elif action == "toggle_pv":
+        PV_LOCK_STATUS[target_user_id] = not PV_LOCK_STATUS.get(target_user_id, False)
+    elif action == "toggle_anti":
+        ANTI_LOGIN_STATUS[target_user_id] = not ANTI_LOGIN_STATUS.get(target_user_id, False)
+    elif action == "toggle_type":
+        TYPING_MODE_STATUS[target_user_id] = not TYPING_MODE_STATUS.get(target_user_id, False)
+        if TYPING_MODE_STATUS[target_user_id]: PLAYING_MODE_STATUS[target_user_id] = False
+    elif action == "toggle_game":
+        PLAYING_MODE_STATUS[target_user_id] = not PLAYING_MODE_STATUS.get(target_user_id, False)
+        if PLAYING_MODE_STATUS[target_user_id]: TYPING_MODE_STATUS[target_user_id] = False
+    elif action == "toggle_g_enemy":
+        GLOBAL_ENEMY_STATUS[target_user_id] = not GLOBAL_ENEMY_STATUS.get(target_user_id, False)
+    
+    # Translations (Exclusive)
+    elif action == "lang_en":
+        if AUTO_TRANSLATE_TARGET.get(target_user_id) == "en": AUTO_TRANSLATE_TARGET[target_user_id] = None
+        else: AUTO_TRANSLATE_TARGET[target_user_id] = "en"
+    elif action == "lang_ru":
+        if AUTO_TRANSLATE_TARGET.get(target_user_id) == "ru": AUTO_TRANSLATE_TARGET[target_user_id] = None
+        else: AUTO_TRANSLATE_TARGET[target_user_id] = "ru"
+    elif action == "lang_cn":
+        if AUTO_TRANSLATE_TARGET.get(target_user_id) == "zh-CN": AUTO_TRANSLATE_TARGET[target_user_id] = None
+        else: AUTO_TRANSLATE_TARGET[target_user_id] = "zh-CN"
+    
+    elif action == "close_panel":
+        await callback.message.delete()
+        return
+
+    # Refresh Panel
+    try:
+        await callback.edit_message_reply_markup(reply_markup=generate_panel_markup(target_user_id))
+    except Exception:
+        pass # Message not modified
 
 @manager_bot.on_message(filters.command("start"))
 async def start_login_process(client, message):
@@ -588,19 +726,21 @@ async def code_password_handler(client, message):
 async def finalize_login(bot, message, user_client, phone):
     try:
         session_str = await user_client.export_session_string()
+        user_me = await user_client.get_me()
+        user_id = user_me.id
         await user_client.disconnect() 
         
         if sessions_collection is not None:
             sessions_collection.update_one(
                 {'phone_number': phone},
-                {'$set': {'session_string': session_str, 'font_style': 'stylized', 'disable_clock': False}},
+                {'$set': {'session_string': session_str, 'font_style': 'stylized', 'disable_clock': False, 'user_id': user_id}},
                 upsert=True
             )
         
         asyncio.create_task(start_bot_instance(session_string=session_str, phone=phone, font_style='stylized'))
         
         del LOGIN_STATES[message.chat.id]
-        await message.reply_text("✅ **تبریک! سلف بات شما فعال شد.**\n\nحالا می‌توانید در اکانت خود از دستور `راهنما` استفاده کنید.")
+        await message.reply_text("✅ **تبریک! سلف بات شما فعال شد.**\n\nحالا می‌توانید در اکانت خود از دستور `راهنما` استفاده کنید یا `پنل` را تایپ کنید.")
     except Exception as e:
         await message.reply_text(f"❌ خطا در نهایی‌سازی: {e}")
 

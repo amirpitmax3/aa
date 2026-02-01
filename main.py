@@ -104,11 +104,11 @@ HELP_TEXT = """
 >
 > **🆔 مدیریت یوزرنیم (شکارچی ارزشمند)**
 > » `حرف [تعداد]` 🎯
->    *شکار یوزرنیم‌های با معنی (بدون عدد) (مثال: `حرف 6`)*
+>    *شکار یوزرنیم خاص (بدون عدد) (مثال: `حرف 6`)*
 > » `لغو حرف` 🚫
 >    *توقف عملیات شکار*
 >
-> **👥 مدیریت ممبر (هوشمند و سریع)**
+> **👥 مدیریت ممبر (نسخه پرسرعت و دقیق)**
 > » `استخراج [تعداد]` 📥
 >    *استخراج ممبرهای فعال (چت‌کنندگان) به تعداد دقیق*
 > » `افزودن` ➕
@@ -859,7 +859,7 @@ async def copy_profile_controller(client, message):
         await asyncio.sleep(3)
         await status_msg.delete()
 
-# --- Updated Scraper: Prioritize Chat History ---
+# --- New Handlers for Scraping and Adding (Updated Logic) ---
 async def scrape_members_controller(client, message):
     user_id = client.me.id
     try:
@@ -868,37 +868,27 @@ async def scrape_members_controller(client, message):
         
         collected_users = set()
         
-        # 1. First Priority: Chat History (Active Users)
-        # Try to gather `count` unique users from history first
-        logging.info(f"Scraping from history for user {user_id}, target: {count}")
-        async for msg in client.get_chat_history(message.chat.id, limit=count * 3): # Scan 3x messages to find enough unique users
-            if msg.from_user and not msg.from_user.is_bot and not msg.from_user.is_deleted and not msg.from_user.is_self:
-                target = msg.from_user.username if msg.from_user.username else msg.from_user.id
-                collected_users.add(target)
-                if len(collected_users) >= count:
-                    break
-        
-        # 2. Second Priority: Member List (Only if history didn't provide enough)
+        try:
+            async for member in client.get_chat_members(message.chat.id, limit=count):
+                if not member.user.is_bot and not member.user.is_deleted and not member.user.is_self: # Added is_self check
+                    target = member.user.username if member.user.username else member.user.id
+                    collected_users.add(target)
+        except Exception: pass
+            
         if len(collected_users) < count:
-            logging.info(f"History not enough ({len(collected_users)} found), trying member list...")
             try:
-                async for member in client.get_chat_members(message.chat.id, limit=count):
-                    if not member.user.is_bot and not member.user.is_deleted and not member.user.is_self:
-                        target = member.user.username if member.user.username else member.user.id
+                history_limit = count * 2 
+                async for msg in client.get_chat_history(message.chat.id, limit=history_limit):
+                    if msg.from_user and not msg.from_user.is_bot and not msg.from_user.is_deleted and not msg.from_user.is_self: # Added is_self check
+                        target = msg.from_user.username if msg.from_user.username else msg.from_user.id
                         collected_users.add(target)
-                        if len(collected_users) >= count:
-                            break
-            except Exception:
-                pass # Member list might be hidden
+                        if len(collected_users) >= count: break
+            except Exception: pass
 
         final_list = list(collected_users)[:count]
         SCRAPED_MEMBERS[user_id] = final_list
-        # Reset counters for fresh start
         ADD_PROCESS_STATUS[user_id] = {"total": len(final_list), "added": 0, "errors": 0, "skipped": 0, "active": False}
-        
-        await client.send_message("me", f"✅ **استخراج انجام شد!**\n👥 تعداد: `{len(final_list)}` نفر (فعال/عضو)\nآماده برای افزودن.")
-        logging.info(f"User {user_id} scraped {len(final_list)} unique members.")
-        
+        logging.info(f"User {user_id} scraped {len(final_list)} members.")
     except Exception as e:
         logging.error(f"Error scrape: {e}")
 
@@ -911,54 +901,45 @@ async def adder_task(client, chat_id, user_id, members_to_add):
     for member in members_to_add:
         if not ADD_PROCESS_STATUS[user_id]["active"]: break
         member_key = str(member)
-        
-        # Skip if already processed in history
         if member_key in ALREADY_ADDED_HISTORY[user_id]:
             ADD_PROCESS_STATUS[user_id]["skipped"] += 1
             continue 
 
-        # Safety sleep every 20 users
+        # استراحت ایمنی: هر ۲۰ نفر یک استراحت کوتاه ۵ تا ۱۰ ثانیه‌ای
         if processed_count > 0 and processed_count % 20 == 0:
              await asyncio.sleep(random.uniform(5, 10))
 
         try:
             await client.add_chat_members(chat_id, member)
-            # Only increment "added" if NO exception occurred
             ADD_PROCESS_STATUS[user_id]["added"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
             consecutive_privacy_errors = 0 
-            
         except (UserPrivacyRestricted, UserNotMutualContact, PeerIdInvalid, UserChannelsTooMuch, UserKicked, UserBannedInChannel, ChatAdminRequired, ChatWriteForbidden, UserAlreadyParticipant):
-            # Known failures -> Count as error/skipped, NOT added
+            # این‌ها خطاهای واقعی یا تکراری هستند، نباید به عنوان موفق شمرده شوند
+            # اگر کاربر تکراری باشد (UserAlreadyParticipant)، در اینجا به عنوان خطا/رد شده حساب می‌شود
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
-            ALREADY_ADDED_HISTORY[user_id].add(member_key) # Mark as done to avoid retrying
+            ALREADY_ADDED_HISTORY[user_id].add(member_key)
             consecutive_privacy_errors += 1
-            
         except PeerFlood:
             logging.warning(f"PeerFlood for {user_id}. Stopping.")
             ADD_PROCESS_STATUS[user_id]["active"] = False
-            await client.send_message("me", "⚠️ **عملیات متوقف شد:** محدودیت موقت تلگرام (PeerFlood).")
             break
-            
         except FloodWait as e:
             await asyncio.sleep(e.value + 5)
-            # Retry is not implemented here to keep flow simple, effectively skipped for now
-            
-        except Exception as e:
-            logging.error(f"Unknown adder error: {e}")
+        except Exception:
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
         
         processed_count += 1
         if consecutive_privacy_errors >= 5:
+             # اگر ۵ خطا پشت سر هم بود، کمی صبر کن
              await asyncio.sleep(random.uniform(5, 10))
              consecutive_privacy_errors = 0 
         
-        # Fast speed: 1.5 - 3.5 seconds
+        # سرعت بسیار بالا: ۱.۵ تا ۳.۵ ثانیه وقفه
         await asyncio.sleep(random.uniform(1.5, 3.5))
     
     ADD_PROCESS_STATUS[user_id]["active"] = False
-    await client.send_message("me", "🏁 **عملیات افزودن پایان یافت.**")
 
 
 async def add_members_controller(client, message):
@@ -972,7 +953,6 @@ async def add_members_controller(client, message):
         members = SCRAPED_MEMBERS[user_id]
         task = asyncio.create_task(adder_task(client, chat_id, user_id, members))
         ADD_TASKS[user_id] = task
-        await client.send_message("me", f"🚀 **افزودن شروع شد!**\nتعداد هدف: {len(members)}")
     except Exception: pass
 
 async def stop_add_controller(client, message):
@@ -991,7 +971,7 @@ async def status_add_controller(client, message):
     await message.edit_text(text)
 
 
-# --- Updated Username Sniper Logic (Valuable Words) ---
+# --- Username Sniper Logic ---
 def generate_valuable_username(length):
     # Try to combine 2 words if length allows, else 1 word + number/suffix
     word1 = random.choice(VALUABLE_WORDS)
@@ -1089,6 +1069,17 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
+        
+        # --- Cache Warm-up (Fix for Peer id invalid) ---
+        # Fetch recent dialogs to populate internal peer cache with access hashes
+        logging.info(f"Warming up cache for {user_id}...")
+        try:
+            async for _ in client.get_dialogs(limit=50):
+                pass
+        except Exception as e:
+            logging.warning(f"Cache warm-up warning: {e}")
+        # -----------------------------------------------
+        
     except Exception as e:
         logging.error(f"Session {phone} invalid: {e}")
         if sessions_collection is not None: sessions_collection.delete_one({'phone_number': phone})

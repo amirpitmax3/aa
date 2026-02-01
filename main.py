@@ -117,9 +117,9 @@ HELP_TEXT = """
 > » `فونت [عدد]` 🔢
 >    *تغییر سریع فونت (مثال: `فونت 3`)*
 >
-> **🆔 مدیریت یوزرنیم (شکارچی ارزشمند)**
+> **🆔 مدیریت یوزرنیم (شکارچی رندوم)**
 > » `حرف [تعداد]` 🎯
->    *شکار یوزرنیم خاص (بدون عدد) (مثال: `حرف 6`)*
+>    *شکار یوزرنیم رندوم (شامل عدد) (مثال: `حرف 6`)*
 > » `لغو حرف` 🚫
 >    *توقف عملیات شکار*
 >
@@ -211,18 +211,8 @@ ALREADY_ADDED_HISTORY = {} # {user_id: set(added_user_ids)} -> برای جلوگ
 # --- New Variables for Username Sniper ---
 USERNAME_SNIPER_ACTIVE = {} # {user_id: bool}
 USERNAME_SNIPER_TASK = {} # {user_id: asyncio.Task}
-
-# لیست کلمات برای ساخت یوزرنیم با ارزش
-VALUABLE_WORDS = [
-    "king", "queen", "lord", "god", "master", "pro", "best", "top", "super", "ultra",
-    "mega", "hyper", "cyber", "dark", "light", "sky", "blue", "red", "gold", "silver",
-    "diamond", "star", "moon", "sun", "fire", "ice", "storm", "thunder", "power", "magic",
-    "wolf", "tiger", "lion", "dragon", "eagle", "hawk", "bear", "snake", "ghost", "shadow",
-    "ninja", "samurai", "knight", "warrior", "hero", "legend", "myth", "epic", "glory",
-    "win", "winner", "boss", "chief", "leader", "alpha", "omega", "prime", "max", "vip",
-    "rich", "money", "cash", "coin", "crypto", "btc", "eth", "nft", "meta", "web", "net",
-    "code", "dev", "hacker", "gamer", "player", "boy", "girl", "man", "woman", "love"
-]
+# لیست کاراکترهای رندوم (حروف + عدد + آندرلاین) برای شکارچی رندوم
+USERNAME_CHARS_ALL = string.ascii_lowercase + string.digits + "_"
 
 EVENT_LOOP = asyncio.new_event_loop()
 ACTIVE_CLIENTS = {}
@@ -935,7 +925,10 @@ async def scrape_members_controller(client, message):
         # Reset counters for fresh start
         ADD_PROCESS_STATUS[user_id] = {"total": len(final_list), "added": 0, "errors": 0, "skipped": 0, "active": False}
         
-        await client.send_message("me", f"✅ **استخراج انجام شد!**\n👥 تعداد: `{len(final_list)}` نفر (فعال/عضو)\nآماده برای افزودن.")
+        # CLEAR HISTORY so the bot attempts to add them again
+        ALREADY_ADDED_HISTORY[user_id] = set()
+
+        await client.send_message("me", f"✅ **استخراج انجام شد!**\n👥 تعداد: `{len(final_list)}` نفر (فعال/عضو)\nآماده برای افزودن.\n(حافظه تلاش‌های قبلی پاک شد)")
         logging.info(f"User {user_id} scraped {len(final_list)} unique members.")
         
     except Exception as e:
@@ -1028,39 +1021,19 @@ async def status_add_controller(client, message):
 
 
 # --- Username Sniper Logic ---
-def generate_valuable_username(length):
-    # Try to combine 2 words if length allows, else 1 word + number/suffix
-    word1 = random.choice(VALUABLE_WORDS)
-    
-    if len(word1) >= length:
-        return word1[:length]
-        
-    remaining = length - len(word1)
-    
-    # 50% chance: word + number
-    if random.random() < 0.5:
-        # Generate a number string of 'remaining' length
-        if remaining > 0:
-            return word1 + ''.join(random.choices(string.digits, k=remaining))
-        return word1
-    else:
-        # 50% chance: word + word (if fits)
-        word2 = random.choice(VALUABLE_WORDS)
-        if len(word2) >= remaining:
-             return word1 + word2[:remaining]
-        else:
-             # Fill rest with random chars if word2 is too short (rare)
-             return word1 + word2 + ''.join(random.choices(string.ascii_lowercase, k=remaining-len(word2)))
+def generate_random_username(length):
+    # تولید یوزرنیم کاملا رندوم (حروف + عدد + _)
+    return ''.join(random.choices(USERNAME_CHARS_ALL, k=length))
 
 async def username_sniper_task(client, user_id, length):
     logging.info(f"Sniper started for {user_id}, len {length}")
     while user_id in USERNAME_SNIPER_ACTIVE and USERNAME_SNIPER_ACTIVE[user_id]:
         try:
-            # Generate a valuable-looking username
-            random_user = generate_valuable_username(length)
+            # Generate a random username
+            random_user = generate_random_username(length)
             
-            # Ensure it starts with a letter and is valid length
-            if not random_user[0].isalpha() or len(random_user) < 5: 
+            # Ensure it doesn't start with number or underscore
+            if random_user[0].isdigit() or random_user.startswith("_") or random_user.endswith("_"): 
                 continue
             
             try:
@@ -1096,7 +1069,7 @@ async def username_sniper_controller(client, message):
         USERNAME_SNIPER_ACTIVE[user_id] = True
         task = asyncio.create_task(username_sniper_task(client, user_id, length))
         USERNAME_SNIPER_TASK[user_id] = task
-        await message.edit_text(f"🎯 **شکارچی فعال شد.**\nطول: {length} (تلاش برای کلمات باارزش)")
+        await message.edit_text(f"🎯 **شکارچی فعال شد.**\nطول: {length} (رندوم)")
     except ValueError:
         await message.edit_text("⚠️ دستور اشتباه.")
 

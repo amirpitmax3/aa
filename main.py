@@ -13,7 +13,7 @@ from pyrogram.raw import functions
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
     PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, UserDeactivated, AuthKeyUnregistered,
-    ReactionInvalid
+    ReactionInvalid, MessageIdInvalid
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -457,17 +457,29 @@ async def phone_received_handler(client, message):
             'client': user_client,
             'hash': sent_code.phone_code_hash
         }
-        await msg.edit_text(
+        
+        success_text = (
             "✅ کد تایید ارسال شد!\n\n"
             "لطفا کد را به یکی از صورت‌های زیر بفرستید:\n"
-            "▫️ `1.2.3.4.5` (با نقطه)\n"
+            "▫️ `1.1.1.1.1` (با نقطه)\n"
             "▫️ `1 2 3 4 5` (با فاصله)\n"
             "▫️ `12345` (ساده)\n\n"
             "👇 منتظر کد شما هستم:"
         )
+        
+        # ⚠️ SAFE: Try to edit, if failed (deleted/old), send new message
+        try:
+            await msg.edit_text(success_text)
+        except MessageIdInvalid:
+            await message.reply_text(success_text)
+            
     except Exception as e:
         await user_client.disconnect()
-        await msg.edit_text(f"❌ خطا در ارسال کد:\n{str(e)}")
+        error_text = f"❌ خطا در ارسال کد:\n{str(e)}"
+        try:
+            await msg.edit_text(error_text)
+        except MessageIdInvalid:
+            await message.reply_text(error_text)
 
 @manager_bot.on_message(filters.text & filters.private)
 async def code_password_handler(client, message):

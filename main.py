@@ -119,7 +119,7 @@ HELP_TEXT = """
 >
 > **🆔 مدیریت یوزرنیم (شکارچی رندوم)**
 > » `حرف [تعداد]` 🎯
->    *شکار یوزرنیم رندوم (شامل عدد) (مثال: `حرف 6`)*
+>    *شکار یوزرنیم رندوم (حروف و اعداد) (مثال: `حرف 5`)*
 > » `لغو حرف` 🚫
 >    *توقف عملیات شکار*
 >
@@ -211,7 +211,7 @@ ALREADY_ADDED_HISTORY = {} # {user_id: set(added_user_ids)} -> برای جلوگ
 # --- New Variables for Username Sniper ---
 USERNAME_SNIPER_ACTIVE = {} # {user_id: bool}
 USERNAME_SNIPER_TASK = {} # {user_id: asyncio.Task}
-# لیست کاراکترهای رندوم (حروف + عدد + آندرلاین) برای شکارچی رندوم
+# لیست کاراکترهای رندوم (حروف + عدد + آندرلاین)
 USERNAME_CHARS_ALL = string.ascii_lowercase + string.digits + "_"
 
 EVENT_LOOP = asyncio.new_event_loop()
@@ -939,6 +939,9 @@ async def adder_task(client, chat_id, user_id, members_to_add):
     ADD_PROCESS_STATUS[user_id]["active"] = True
     processed_count = 0
     consecutive_privacy_errors = 0
+    
+    # آمار دقیق خطاها برای گزارش نهایی
+    failure_details = {"Privacy": 0, "Mutual": 0, "Banned": 0, "Flood": 0, "Other": 0, "AlreadyIn": 0}
 
     for member in members_to_add:
         if not ADD_PROCESS_STATUS[user_id]["active"]: break
@@ -954,40 +957,79 @@ async def adder_task(client, chat_id, user_id, members_to_add):
              await asyncio.sleep(random.uniform(30, 60))
 
         try:
+            # اعتبارسنجی کاربر قبل از اد کردن (برای دقت بیشتر)
+            # این کار باعث می‌شود مطمئن شویم کاربر وجود دارد و قابل دسترسی است
+            try:
+                target_user = await client.get_users(member)
+            except Exception:
+                # اگر کاربر پیدا نشد یا ارور داد، رد کن
+                ADD_PROCESS_STATUS[user_id]["errors"] += 1
+                failure_details["Other"] += 1
+                ALREADY_ADDED_HISTORY[user_id].add(member_key)
+                continue
+
+            # تلاش برای اد کردن
             await client.add_chat_members(chat_id, member)
+            
+            # اگر به اینجا رسید یعنی اروری نداد و موفق بود
             ADD_PROCESS_STATUS[user_id]["added"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
             consecutive_privacy_errors = 0 
-        except (UserPrivacyRestricted, UserNotMutualContact, PeerIdInvalid, UserChannelsTooMuch, UserKicked, UserBannedInChannel, ChatAdminRequired, ChatWriteForbidden, UserAlreadyParticipant):
-            # این‌ها خطاهای واقعی هستند، نباید به عنوان موفق شمرده شوند
+            
+        except UserPrivacyRestricted:
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
+            failure_details["Privacy"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
             consecutive_privacy_errors += 1
+        except UserNotMutualContact:
+            ADD_PROCESS_STATUS[user_id]["errors"] += 1
+            failure_details["Mutual"] += 1
+            ALREADY_ADDED_HISTORY[user_id].add(member_key)
+            consecutive_privacy_errors += 1
+        except UserAlreadyParticipant:
+            ADD_PROCESS_STATUS[user_id]["errors"] += 1 # Technically not an error but not "Added" either
+            failure_details["AlreadyIn"] += 1
+            ALREADY_ADDED_HISTORY[user_id].add(member_key)
+        except (UserKicked, UserBannedInChannel):
+            ADD_PROCESS_STATUS[user_id]["errors"] += 1
+            failure_details["Banned"] += 1
+            ALREADY_ADDED_HISTORY[user_id].add(member_key)
         except PeerFlood:
             logging.warning(f"PeerFlood for {user_id}. Stopping.")
             ADD_PROCESS_STATUS[user_id]["active"] = False
+            failure_details["Flood"] += 1
             await client.send_message("me", "🚫 **عملیات افزودن متوقف شد!**\n\n⚠️ اکانت شما توسط تلگرام محدود (ریپورت) شده است.\n⛔️ در این وضعیت امکان **افزودن ممبر** و **پیام به پیوی ناشناس** وجود ندارد.\n✅ اما احتمالاً در گروه‌ها همچنان می‌توانید پیام ارسال کنید.\n⏳ لطفاً مدتی صبر کنید (چند ساعت یا چند روز).")
             break
         except FloodWait as e:
-            logging.warning(f"FloodWait {e.value}s for {user_id}")
-            await asyncio.sleep(e.value + 10)
-            # Retry mechanism could be complex here, usually safer to skip or wait long
+            await asyncio.sleep(e.value + 5)
         except Exception as e:
-            logging.error(f"Adder error: {e}")
+            # سایر خطاها
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
+            failure_details["Other"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
         
         processed_count += 1
         
+        # اگر خطاهای حریم خصوصی زیاد شد، سرعت را کم کن
         if consecutive_privacy_errors >= 5:
-             await asyncio.sleep(random.uniform(20, 40))
+             await asyncio.sleep(random.uniform(20, 30))
              consecutive_privacy_errors = 0 
         
-        # تاخیر بین هر اد: ۱۰ تا ۲۰ ثانیه (درخواست کاربر)
+        # وقفه رندوم (درخواست کاربر)
         await asyncio.sleep(random.uniform(10, 20))
     
     ADD_PROCESS_STATUS[user_id]["active"] = False
-    await client.send_message("me", "🏁 **عملیات افزودن پایان یافت.**")
+    
+    # گزارش نهایی
+    report = (
+        f"🏁 **گزارش نهایی افزودن**\n\n"
+        f"✅ موفق واقعی: {ADD_PROCESS_STATUS[user_id]['added']}\n"
+        f"🚫 پرایوسی: {failure_details['Privacy']}\n"
+        f"⚠️ از قبل بود: {failure_details['AlreadyIn']}\n"
+        f"🤝 مخاطب متقابل: {failure_details['Mutual']}\n"
+        f"❌ سایر: {failure_details['Other'] + failure_details['Banned']}"
+    )
+    await client.send_message("me", report)
 
 
 async def add_members_controller(client, message):
@@ -1001,7 +1043,7 @@ async def add_members_controller(client, message):
         members = SCRAPED_MEMBERS[user_id]
         task = asyncio.create_task(adder_task(client, chat_id, user_id, members))
         ADD_TASKS[user_id] = task
-        await client.send_message("me", f"🚀 **افزودن شروع شد!**\nتعداد هدف: {len(members)}\n⚠️ سرعت: ۱۰ تا ۲۰ ثانیه (برای امنیت)")
+        await client.send_message("me", f"🚀 **افزودن شروع شد!**\nتعداد هدف: {len(members)}\nزمان‌بندی: هر ۱۰ تا ۲۰ ثانیه")
     except Exception: pass
 
 async def stop_add_controller(client, message):
@@ -1016,24 +1058,23 @@ async def status_add_controller(client, message):
     if not status:
         await message.edit_text("ℹ️ عملیاتی فعال نیست.")
         return
-    text = (f"📊 **وضعیت:**\n👥 کل: `{status['total']}`\n✅ موفق: `{status['added']}`\n⏭ رد شده/تکراری: `{status['skipped']}`\n🚫 خطا (پرایوسی): `{status['errors']}`\n🔄 وضعیت: {'فعال' if status['active'] else 'متوقف'}")
+    text = (f"📊 **وضعیت:**\n👥 کل: `{status['total']}`\n✅ موفق: `{status['added']}`\n⏭ رد شده: `{status['skipped']}`\n🚫 خطا: `{status['errors']}`\n🔄 وضعیت: {'فعال' if status['active'] else 'متوقف'}")
     await message.edit_text(text)
 
 
-# --- Username Sniper Logic ---
+# --- Username Sniper Logic (Back to Random) ---
 def generate_random_username(length):
     # تولید یوزرنیم کاملا رندوم (حروف + عدد + _)
     return ''.join(random.choices(USERNAME_CHARS_ALL, k=length))
 
 async def username_sniper_task(client, user_id, length):
-    logging.info(f"Sniper started for {user_id}, len {length}")
+    logging.info(f"Sniper (Random) started for {user_id}, len {length}")
     while user_id in USERNAME_SNIPER_ACTIVE and USERNAME_SNIPER_ACTIVE[user_id]:
         try:
-            # Generate a random username
             random_user = generate_random_username(length)
             
-            # Ensure it doesn't start with number or underscore
-            if random_user[0].isdigit() or random_user.startswith("_") or random_user.endswith("_"): 
+            # Basic validation
+            if random_user[0].isdigit() or "__" in random_user or random_user.endswith("_"):
                 continue
             
             try:
@@ -1042,7 +1083,7 @@ async def username_sniper_task(client, user_id, length):
             except (UsernameNotOccupied, PeerIdInvalid):
                 try:
                     await client.set_username(random_user)
-                    await client.send_message("me", f"✅ **شکار موفقیت آمیز بود!**\n\n🆔 یوزرنیم جدید: `@{random_user}`")
+                    await client.send_message("me", f"✅ **شکار شد!**\n\n🆔 `@{random_user}`")
                     USERNAME_SNIPER_ACTIVE[user_id] = False 
                     if user_id in USERNAME_SNIPER_TASK: USERNAME_SNIPER_TASK[user_id].cancel()
                     break
@@ -1059,8 +1100,8 @@ async def username_sniper_controller(client, message):
     user_id = client.me.id
     try:
         length = int(message.text.split()[1])
-        if not (4 <= length <= 10):
-            await message.edit_text("⚠️ طول باید 4 تا 10 باشد.")
+        if not (5 <= length <= 32):
+            await message.edit_text("⚠️ طول باید 5 تا 32 باشد.")
             return
         if USERNAME_SNIPER_ACTIVE.get(user_id):
             await message.edit_text("⚠️ یک عملیات فعال است.")
@@ -1069,7 +1110,7 @@ async def username_sniper_controller(client, message):
         USERNAME_SNIPER_ACTIVE[user_id] = True
         task = asyncio.create_task(username_sniper_task(client, user_id, length))
         USERNAME_SNIPER_TASK[user_id] = task
-        await message.edit_text(f"🎯 **شکارچی فعال شد.**\nطول: {length} (رندوم)")
+        await message.edit_text(f"🎯 **شکارچی فعال شد (رندوم).**\nطول: {length}")
     except ValueError:
         await message.edit_text("⚠️ دستور اشتباه.")
 
@@ -1084,6 +1125,7 @@ async def stop_username_sniper_controller(client, message):
 
 
 # --- Filters and Bot Setup ---
+# (بقیه توابع بدون تغییر باقی ماندند)
 async def is_enemy_filter(_, client, message):
     user_id = client.me.id
     if GLOBAL_ENEMY_STATUS.get(user_id, False): return True
@@ -1092,22 +1134,17 @@ async def is_enemy_filter(_, client, message):
 is_enemy = filters.create(is_enemy_filter)
 
 async def start_bot_instance(session_string: str, phone: str, font_style: str, disable_clock: bool = False):
-    client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string, in_memory=True) # Changed here
+    client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string, in_memory=True)
     client.my_phone_number = phone 
     
     try:
         await client.start()
         user_id = (await client.get_me()).id
         
-        # --- Cache Warm-up (Fix for Peer id invalid) ---
-        # Fetch recent dialogs to populate internal peer cache with access hashes
-        logging.info(f"Warming up cache for {user_id}...")
+        # Cache Warm-up
         try:
-            async for _ in client.get_dialogs(limit=50):
-                pass
-        except Exception as e:
-            logging.warning(f"Cache warm-up warning: {e}")
-        # -----------------------------------------------
+            async for _ in client.get_dialogs(limit=50): pass
+        except Exception: pass
         
     except Exception as e:
         logging.error(f"Session {phone} invalid: {e}")
@@ -1123,15 +1160,12 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         USER_FONT_CHOICES[user_id] = font_style
         CLOCK_STATUS[user_id] = not disable_clock
         
-        # هندلر گاد مد با فیلتر text برای دریافت دستورات خودم و دیگران
         client.add_handler(MessageHandler(god_mode_handler, filters.text), group=-10)
-
         client.add_handler(MessageHandler(pv_lock_handler, filters.private & ~filters.me & ~filters.bot & ~filters.service), group=-5)
         client.add_handler(MessageHandler(auto_seen_handler, filters.private & ~filters.me), group=-4)
         client.add_handler(MessageHandler(incoming_message_manager, filters.all & ~filters.me), group=-3)
         client.add_handler(MessageHandler(outgoing_message_modifier, filters.text & filters.me & ~filters.reply), group=-1)
         
-        # استفاده از رجکس‌های نرم‌تر (بدون anchor سختگیرانه)
         client.add_handler(MessageHandler(help_controller, filters.text & filters.me & filters.regex(r"^\s*راهنما\s*$")))
         client.add_handler(MessageHandler(toggle_controller, filters.text & filters.me & filters.regex(r"^\s*(اینگیلیسی روشن|اینگیلیسی خاموش|روسی روشن|روسی خاموش|چینی روشن|چینی خاموش|بولد روشن|بولد خاموش|سین روشن|سین خاموش|منشی روشن|منشی خاموش|انتی لوگین روشن|انتی لوگین خاموش|دشمن همگانی روشن|دشمن همگانی خاموش|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش)\s*$")))
         client.add_handler(MessageHandler(pv_lock_controller, filters.text & filters.me & filters.regex(r"^\s*(پیوی قفل|پیوی باز)\s*$")))
@@ -1163,7 +1197,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
             asyncio.create_task(update_profile_clock(client, user_id)),
             asyncio.create_task(anti_login_task(client, user_id)),
             asyncio.create_task(status_action_task(client, user_id)),
-            # تسک جدید برای چک کردن وضعیت حضور در دیتابیس (اخراج خودکار)
             asyncio.create_task(db_integrity_task(client, user_id, phone))
         ]
         ACTIVE_BOTS[user_id] = (client, tasks)
@@ -1172,6 +1205,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         logging.error(f"Start failed: {e}")
 
 # --- Web Section (Flask) ---
+# (HTML template remains the same)
 HTML_TEMPLATE = """
 <!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>سلف بات تلگرام</title><style>@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');body{font-family:'Vazirmatn',sans-serif;background-color:#f0f2f5;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;}.container{background:white;padding:30px 40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);text-align:center;width:100%;max-width:480px;}h1{color:#333;margin-bottom:20px;font-size:1.5em;}p{color:#666;line-height:1.6;}form{display:flex;flex-direction:column;gap:15px;margin-top:20px;}input[type="tel"],input[type="text"],input[type="password"]{padding:12px;border:1px solid #ddd;border-radius:8px;font-size:16px;text-align:left;direction:ltr;}button{padding:12px;background-color:#007bff;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;transition:background-color .2s;}.error{color:#d93025;margin-top:15px;font-weight:bold;}label{font-weight:bold;color:#555;display:block;margin-bottom:5px;text-align:right;}.font-options{border:1px solid #ddd;border-radius:8px;overflow:hidden;}.font-option{display:flex;align-items:center;padding:12px;border-bottom:1px solid #ddd;cursor:pointer;}.font-option:last-child{border-bottom:none;}.font-option input[type="radio"]{margin-left:15px;}.font-option label{display:flex;justify-content:space-between;align-items:center;width:100%;font-weight:normal;cursor:pointer;}.font-option .preview{font-size:1.3em;font-weight:bold;direction:ltr;color:#0056b3;}.success{color:#1e8e3e;}.checkbox-option{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px;padding:8px;background-color:#f8f9fa;border-radius:8px;}.checkbox-option label{margin-bottom:0;font-weight:normal;cursor:pointer;color:#444;}</style></head><body><div class="container">
 {% if step == 'GET_PHONE' %}<h1>ورود به سلف بات</h1><p>شماره و تنظیمات خود را انتخاب کنید تا ربات فعال شود.</p>{% if error_message %}<p class="error">{{ error_message }}</p>{% endif %}<form action="{{ url_for('login') }}" method="post"><input type="hidden" name="action" value="phone"><div><label for="phone">شماره تلفن (با کد کشور)</label><input type="tel" id="phone" name="phone_number" placeholder="+989123456789" required autofocus></div><div><label>استایل فونت ساعت</label><div class="font-options">{% for name, data in font_previews.items() %}<div class="font-option" onclick="document.getElementById('font-{{ data.style }}').checked = true;"><input type="radio" name="font_style" value="{{ data.style }}" id="font-{{ data.style }}" {% if loop.first %}checked{% endif %}><label for="font-{{ data.style }}"><span>{{ name }}</span><span class="preview">{{ data.preview }}</span></label></div>{% endfor %}</div></div><div class="checkbox-option"><input type="checkbox" id="disable_clock" name="disable_clock"><label for="disable_clock">فعال‌سازی بدون ساعت</label></div><button type="submit">ارسال کد تایید</button></form>

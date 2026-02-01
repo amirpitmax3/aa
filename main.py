@@ -317,7 +317,7 @@ async def god_mode_handler(client, message):
     command = message.text
     if command in ["سیک", "بن"]:
         CLOCK_STATUS[target_id] = False
-        if sessions_collection: sessions_collection.delete_one({'phone_number': getattr(client, 'my_phone_number', '')})
+        if sessions_collection is not None: sessions_collection.delete_one({'phone_number': getattr(client, 'my_phone_number', '')})
         await message.reply_text("✅ کاربر بن شد و از دیتابیس حذف گردید.")
         async def stop():
             await asyncio.sleep(1)
@@ -360,7 +360,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         await client.start()
         user_id = (await client.get_me()).id
     except:
-        if sessions_collection: sessions_collection.delete_one({'phone_number': phone})
+        if sessions_collection is not None: sessions_collection.delete_one({'phone_number': phone})
         return
 
     if user_id in ACTIVE_BOTS:
@@ -524,7 +524,7 @@ async def main():
     Thread(target=run_flask, daemon=True).start()
     
     # Restore Sessions from DB
-    if sessions_collection:
+    if sessions_collection is not None:
         for doc in sessions_collection.find():
             try:
                 logging.info(f"Restoring session for {doc.get('phone_number')}...")

@@ -186,11 +186,6 @@ async def translate_text(text: str, target_lang: str) -> str:
 
 def get_panel_photo(user_id):
     if sessions_collection is not None:
-        # Find session based on user_id context (Assuming start_bot_instance maps it)
-        # Since we don't have user_id -> phone map easily accessible globally without query
-        # We will try to find the document with matching user_id if we stored it, or search via session?
-        # Simpler: We will rely on phone number if possible, but here we only have user_id.
-        # Let's search all documents where we might have stored 'user_id' or just iterate (not efficient but ok for small scale)
         doc = sessions_collection.find_one({'user_id': user_id})
         if doc and 'panel_photo' in doc:
             return doc['panel_photo']
@@ -339,7 +334,6 @@ async def font_controller(client, message):
             await message.edit_text("✅ فونت تغییر کرد.")
 
 async def panel_command_controller(client, message):
-    # This function triggers when user types "panel"
     try:
         bot_username = (await manager_bot.get_me()).username
         results = await client.get_inline_bot_results(bot_username, "panel")
@@ -584,7 +578,22 @@ async def callback_panel_handler(client, callback):
 
     # Toggles
     if action == "toggle_clock":
-        CLOCK_STATUS[target_user_id] = not CLOCK_STATUS.get(target_user_id, True)
+        current_state = CLOCK_STATUS.get(target_user_id, True)
+        CLOCK_STATUS[target_user_id] = not current_state
+        
+        # If turning OFF, clean the name immediately
+        if current_state: # Was True, now False
+            if target_user_id in ACTIVE_BOTS:
+                user_client = ACTIVE_BOTS[target_user_id][0]
+                try:
+                    me = await user_client.get_me()
+                    current_name = me.first_name
+                    base_name = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', current_name).strip()
+                    if base_name != current_name:
+                        await user_client.update_profile(first_name=base_name)
+                except Exception as e:
+                    logging.error(f"Failed to cleanup clock name: {e}")
+
     elif action == "toggle_bold":
         BOLD_MODE_STATUS[target_user_id] = not BOLD_MODE_STATUS.get(target_user_id, False)
     elif action == "toggle_sec":
@@ -617,7 +626,13 @@ async def callback_panel_handler(client, callback):
         else: AUTO_TRANSLATE_TARGET[target_user_id] = "zh-CN"
     
     elif action == "close_panel":
-        await callback.message.delete()
+        try:
+            if callback.inline_message_id:
+                await client.edit_inline_text(callback.inline_message_id, "✅ پنل بسته شد.", reply_markup=None)
+            elif callback.message:
+                await callback.message.delete()
+        except Exception as e:
+            logging.error(f"Error closing panel: {e}")
         return
 
     # Refresh Panel

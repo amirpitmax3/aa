@@ -9,3 +9,4 @@ gunicorn==23.0.0
 aiohttp
 certifi
 APScheduler==3.11.0
+aiofiles

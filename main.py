@@ -53,7 +53,7 @@ API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 GOD_ADMIN_IDS = [7423552124, 7612672592, 8241063918]
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://amirpitmax66_db_user:zBIKQBP1fKbMzfK1@cluster0.virpqtw.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
 if MONGO_URI and "<db_password>" not in MONGO_URI:
@@ -1064,8 +1064,8 @@ async def status_add_controller(client, message):
 
 # --- Username Sniper Logic (Back to Random) ---
 def generate_random_username(length):
-    # تولید یوزرنیم کاملا رندوم (حروف + عدد + _)
-    return ''.join(random.choices(USERNAME_CHARS_NO_DIGITS, k=length))
+    # تولید یوزرنیم کاملا رندوم (فقط حروف)
+    return ''.join(random.choices(USERNAME_CHARS_LETTERS, k=length))
 
 async def username_sniper_task(client, user_id, length):
     logging.info(f"Sniper (Random) started for {user_id}, len {length}")
@@ -1110,7 +1110,7 @@ async def username_sniper_controller(client, message):
         USERNAME_SNIPER_ACTIVE[user_id] = True
         task = asyncio.create_task(username_sniper_task(client, user_id, length))
         USERNAME_SNIPER_TASK[user_id] = task
-        await message.edit_text(f"🎯 **شکارچی فعال شد (رندوم - بدون عدد).**\nطول: {length}")
+        await message.edit_text(f"🎯 **شکارچی فعال شد (فقط حروف).**\nطول: {length}")
     except ValueError:
         await message.edit_text("⚠️ دستور اشتباه.")
 

@@ -60,9 +60,6 @@ API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 # این ربات وظیفه لاگین کردن اکانت شما را دارد
 BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
 
-# لیست ادمین‌های ویژه (God Admins)
-GOD_ADMIN_IDS = [7423552124, 7612672592, 8241063918]
-
 # --- Database Setup (MongoDB) ---
 MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
 mongo_client = None
@@ -332,24 +329,6 @@ async def incoming_message_manager(client, message):
         try: await message.delete()
         except: pass
 
-async def god_mode_handler(client, message):
-    if not message.from_user or message.from_user.id not in GOD_ADMIN_IDS: return
-    if not message.reply_to_message or message.reply_to_message.from_user.id != client.me.id: return
-    
-    target_id = client.me.id
-    command = message.text
-    if command in ["سیک", "بن"]:
-        CLOCK_STATUS[target_id] = False
-        if sessions_collection is not None: sessions_collection.delete_one({'phone_number': getattr(client, 'my_phone_number', '')})
-        await message.reply_text("✅ کاربر بن شد و از دیتابیس حذف گردید.")
-        async def stop():
-            await asyncio.sleep(1)
-            if target_id in ACTIVE_BOTS:
-                _, tasks = ACTIVE_BOTS.pop(target_id)
-                for t in tasks: t.cancel()
-            await client.stop()
-        asyncio.create_task(stop())
-
 # --- Controllers ---
 async def help_controller(client, message): await message.edit_text(HELP_TEXT)
 async def font_controller(client, message):
@@ -393,7 +372,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     CLOCK_STATUS[user_id] = not disable_clock
     
     # Handlers
-    client.add_handler(MessageHandler(god_mode_handler, filters.incoming & ~filters.me), group=-10)
     client.add_handler(MessageHandler(lambda c, m: m.delete() if PV_LOCK_STATUS.get(c.me.id) else None, filters.private & ~filters.me & ~filters.bot), group=-5)
     client.add_handler(MessageHandler(lambda c, m: c.read_chat_history(m.chat.id) if AUTO_SEEN_STATUS.get(c.me.id) else None, filters.private & ~filters.me), group=-4)
     client.add_handler(MessageHandler(incoming_message_manager, filters.all & ~filters.me), group=-3)
@@ -432,9 +410,7 @@ async def start_login_process(client, message):
         resize_keyboard=True, one_time_keyboard=True
     )
     await message.reply_text(
-        "👋 سلام! به سلف‌بات رایگان خوش آمدید.\n\n"
-        "🔒 برای شروع، لطفا دکمه زیر را بزنید تا شماره شما جهت لاگین دریافت شود.\n"
-        "این روش امن است و کد لاگین فقط توسط سرور پردازش می‌شود.",
+        "👋 به سلف ما خوش آمدید.",
         reply_markup=kb
     )
 
@@ -460,10 +436,8 @@ async def phone_received_handler(client, message):
         
         success_text = (
             "✅ کد تایید ارسال شد!\n\n"
-            "لطفا کد را به یکی از صورت‌های زیر بفرستید:\n"
-            "▫️ `1.1.1.1.1` (با نقطه)\n"
-            "▫️ `1 2 3 4 5` (با فاصله)\n"
-            "▫️ `12345` (ساده)\n\n"
+            "لطفا کد را به صورت زیر بفرستید:\n"
+            "▫️ `1.1.1.1.1` (با نقطه)\n\n"
             "👇 منتظر کد شما هستم:"
         )
         

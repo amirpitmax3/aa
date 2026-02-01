@@ -62,7 +62,7 @@ API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
 if MONGO_URI and "<db_password>" not in MONGO_URI:

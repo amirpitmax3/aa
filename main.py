@@ -15,7 +15,7 @@ from pyrogram.errors import (
     PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, UserDeactivated, AuthKeyUnregistered,
     ReactionInvalid, PeerIdInvalid, UserPrivacyRestricted, UserNotMutualContact, UserChannelsTooMuch,
     PeerFlood, UsernameNotOccupied, UsernameInvalid, UsernameOccupied, UserKicked, UserBannedInChannel,
-    ChatAdminRequired, ChatWriteForbidden, UserAlreadyParticipant
+    ChatAdminRequired, ChatWriteForbidden, UserAlreadyParticipant, UserNotParticipant
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -102,51 +102,70 @@ ENEMY_REPLIES = [
 ]
 
 SECRETARY_REPLY_MESSAGE = "سلام! در حال حاضر آفلاین هستم و پیام شما را دریافت کردم. در اولین فرصت پاسخ خواهم داد. ممنون از پیامتون."
-
 HELP_TEXT = """
-**SelfBot Manager**
-──────────────────
-**Profile & Time**
-▫️ `ساعت روشن` | `خاموش` : نمایش ساعت روی پروفایل
-▫️ `فونت` : لیست فونت‌های موجود
-▫️ `فونت [عدد]` : تغییر فونت ساعت (مثال: فونت 3)
-▫️ `کپی روشن` | `خاموش` : کپی پروفایل کاربر (ریپلای)
-
-**Username Sniper**
-▫️ `شکار [طول] [دقیقه]` : جستجوی یوزرنیم (مثال: شکار 5 2)
-▫️ `ثبت [شماره]` : ثبت یوزرنیم پیدا شده
-▫️ `لغو شکار` : توقف عملیات
-
-**Security & Privacy**
-▫️ `ریست دیتابیس` : (ادمین) پاکسازی و خروج سایر سشن‌ها
-▫️ `پیوی قفل` | `باز` : مدیریت پیام‌های ناشناس
-▫️ `منشی روشن` | `خاموش` : پاسخگویی خودکار
-▫️ `انتی لوگین روشن` | `خاموش` : قطع نشست‌های جدید
-▫️ `سین روشن` | `خاموش` : حالت روح (سین زدن)
-
-**Management Tools**
-▫️ `حذف [تعداد]` : پاکسازی پیام‌های خود
-▫️ `ذخیره` : ذخیره پیام در Saved Messages (ریپلای)
-▫️ `تکرار [تعداد]` : تکرار پیام (ریپلای)
-
-**Defensive System**
-▫️ `دشمن روشن` | `خاموش` : فعال‌سازی دشمنی (ریپلای)
-▫️ `دشمن همگانی روشن` | `خاموش` : دشمنی با همه
-▫️ `لیست دشمن` : نمایش لیست دشمنان
-▫️ `بلاک روشن` | `خاموش` : مسدودسازی کاربر (ریپلای)
-▫️ `سکوت روشن` | `خاموش` : حالت سکوت کاربر (ریپلای)
-
-**Fun & Translate**
-▫️ `تایپ روشن` | `خاموش` : وضعیت تایپینگ دائمی
-▫️ `بازی روشن` | `خاموش` : وضعیت بازی دائمی
-▫️ `ریاکشن [ایموجی]` | `خاموش` : واکنش خودکار (ریپلای)
-▫️ `تاس` | `بولینگ` : ارسال بازی
-▫️ `[زبان] روشن` | `خاموش` : ترجمه (اینگیلیسی/روسی/چینی)
-▫️ `بولد روشن` | `خاموش` : ارسال متن ضخیم
-──────────────────
+**✨ راهنمای هوشمند سلف‌بات | SelfBot Help ✨**
+> ➖➖➖➖➖➖➖➖
+> **🕰 بخش زمان و ظاهر**
+> » `ساعت روشن` | `ساعت خاموش` 🟢🔴
+>    *نمایش ساعت لحظه‌ای روی نام پروفایل*
+> » `فونت` 🎨
+>    *مشاهده ۱۰ فونت جذاب برای ساعت*
+> » `فونت [عدد]` 🔢
+>    *تغییر سریع فونت (مثال: `فونت 3`)*
+>
+> **🆔 مدیریت یوزرنیم (شکارچی فقط حروف)**
+> » `حرف [تعداد]` 🎯
+>    *شکار یوزرنیم رندوم (فقط حروف انگلیسی) (مثال: `حرف 5`)*
+> » `لغو حرف` 🚫
+>    *توقف عملیات شکار*
+>
+> **🛡 امنیت و دیتابیس**
+> » `ریست دیتابیس` ♻️
+>    *(مخصوص ادمین) حذف همه سشن‌ها جز خودتان و خروج اجباری آنها*
+> » `پیوی قفل` 🔒 | `پیوی باز` 🔓
+>    *حذف خودکار پیام‌های دریافتی در PV*
+> » `منشی روشن` 🤖 | `منشی خاموش`
+>    *پاسخگویی خودکار در زمان آفلاین*
+> » `انتی لوگین روشن` 🚨 | `خاموش`
+>    *بیرون انداختن نشست‌های جدید (ضد هک)*
+> » `سین روشن` 👀 | `سین خاموش`
+>    *سین زدن خودکار پیام‌ها (Ghost Mode)*
+>
+> **🛠 ابزارهای مدیریتی**
+> » `حذف [تعداد]` 🗑
+>    *پاکسازی پیام‌های خود (مثال: `حذف 50`)*
+> » `ذخیره` 💾 (ریپلای)
+>    *فوروارد پیام به Saved Messages*
+> » `تکرار [تعداد]` 🔁 (ریپلای)
+>    *تکرار پیام (اسپم) (مثال: `تکرار 5`)*
+> » `کپی روشن` 👤 (ریپلای) | `کپی خاموش`
+>    *جعل هویت کاربر و بازگشت به حالت اصلی*
+>
+> **⚔️ سیستم دفاعی**
+> » `دشمن روشن` ⚔️ (ریپلای) | `خاموش`
+>    *فعال‌سازی فحاشی خودکار روی کاربر*
+> » `دشمن همگانی روشن` ☠️ | `خاموش`
+>    *حمله به تمام کسانی که پیام می‌دهند*
+> » `لیست دشمن` 📜
+>    *مشاهده لیست سیاه*
+> » `بلاک روشن` 🚫 | `بلاک خاموش` (ریپلای)
+> » `سکوت روشن` 🔇 | `سکوت خاموش` (ریپلای)
+>
+> **🎭 سرگرمی و تعامل**
+> » `تایپ روشن` ✍️ | `تایپ خاموش`
+> » `بازی روشن` 🎮 | `بازی خاموش`
+> » `ریاکشن [ایموجی]` 👍 (ریپلای)
+>    *واکنش خودکار (مثال: `ریاکشن ❤️`)*
+> » `تاس` 🎲 | `بولینگ` 🎳
+>
+> **🌍 مترجم**
+> » `اینگیلیسی روشن` 🇺🇸 | `خاموش`
+> » `روسی روشن` 🇷🇺 | `خاموش`
+> » `چینی روشن` 🇨🇳 | `خاموش`
+> » `بولد روشن` **B** | `خاموش`
+> ➖➖➖➖➖➖➖➖
 """
-
-COMMAND_REGEX = r"^\s*(راهنما|فونت|فونت \d+|ساعت روشن|ساعت خاموش|بولد روشن|بولد خاموش|دشمن روشن|دشمن خاموش|منشی روشن|منشی خاموش|بلاک روشن|بلاک خاموش|سکوت روشن|سکوت خاموش|ذخیره|تکرار \d+|حذف \d+|سین روشن|سین خاموش|ریاکشن .*|ریاکشن خاموش|اینگیلیسی روشن|اینگیلیسی خاموش|روسی روشن|روسی خاموش|چینی روشن|چینی خاموش|انتی لوگین روشن|انتی لوگین خاموش|کپی روشن|کپی خاموش|دشمن همگانی روشن|دشمن همگانی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|پیوی قفل|پیوی باز|شکار \d+ \d+|ثبت \d+|لغو شکار|ریست دیتابیس)\s*$"
+COMMAND_REGEX = r"^\s*(راهنما|فونت|فونت \d+|ساعت روشن|ساعت خاموش|بولد روشن|بولد خاموش|دشمن روشن|دشمن خاموش|منشی روشن|منشی خاموش|بلاک روشن|بلاک خاموش|سکوت روشن|سکوت خاموش|ذخیره|تکرار \d+|حذف \d+|سین روشن|سین خاموش|ریاکشن .*|ریاکشن خاموش|اینگیلیسی روشن|اینگیلیسی خاموش|روسی روشن|روسی خاموش|چینی روشن|چینی خاموش|انتی لوگین روشن|انتی لوگین خاموش|کپی روشن|کپی خاموش|دشمن همگانی روشن|دشمن همگانی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|پیوی قفل|پیوی باز|حرف \d+|لغو حرف|ریست دیتابیس)\s*$"
 
 
 # --- User Status Management (based on User ID) ---
@@ -172,8 +191,8 @@ PV_LOCK_STATUS = {}
 # --- New Variables for Username Sniper ---
 USERNAME_SNIPER_ACTIVE = {} # {user_id: bool}
 USERNAME_SNIPER_TASK = {} # {user_id: asyncio.Task}
-FOUND_USERNAMES_CACHE = {} # {user_id: [list_of_usernames]}
-USERNAME_CHARS_LETTERS = string.ascii_lowercase # فقط حروف
+# لیست کاراکترهای رندوم (فقط حروف انگلیسی - بدون عدد و آندرلاین)
+USERNAME_CHARS_LETTERS = string.ascii_lowercase
 
 EVENT_LOOP = asyncio.new_event_loop()
 ACTIVE_CLIENTS = {}
@@ -584,209 +603,301 @@ async def copy_profile_controller(client, message):
         await status.edit_text("✅ بازگردانی شد.")
         await asyncio.sleep(3); await status.delete()
 
-# --- WEB SNIPER (HTTP CHECKER) ---
-def generate_random_string(length):
+# --- Username Sniper Logic ---
+def generate_random_username(length):
+    # تولید یوزرنیم کاملا رندوم (فقط حروف)
     return ''.join(random.choices(USERNAME_CHARS_LETTERS, k=length))
 
-async def check_username_http(session, username):
-    # چک کردن از طریق t.me (بدون استفاده از API تلگرام برای جلوگیری از لیمیت)
-    # اگر 404 بدهد یعنی کانال/یوزر وجود ندارد (آزاد یا بن شده)
-    url = f"https://t.me/{username}"
-    try:
-        async with session.get(url, timeout=5) as response:
-            if response.status == 404:
-                return username
-    except Exception:
-        pass
-    return None
-
-async def sniper_worker(user_id, length, end_time, client):
-    # این تسک به صورت موازی (چندتایی) اجرا می‌شود تا سرعت بالا برود
-    async with aiohttp.ClientSession() as session:
-        while time.time() < end_time and USERNAME_SNIPER_ACTIVE.get(user_id):
-            tasks = []
-            # ساخت ۱۰ یوزرنیم همزمان و چک کردن آنها
-            for _ in range(10):
-                u = generate_random_string(length)
-                tasks.append(check_username_http(session, u))
+async def username_sniper_task(client, user_id, length):
+    logging.info(f"Sniper (Random) started for {user_id}, len {length}")
+    while user_id in USERNAME_SNIPER_ACTIVE and USERNAME_SNIPER_ACTIVE[user_id]:
+        try:
+            random_user = generate_random_username(length)
+            if random_user[0].isdigit() or "__" in random_user or random_user.endswith("_"): continue
             
-            results = await asyncio.gather(*tasks)
+            try:
+                await client.get_users(random_user)
+            except (UsernameNotOccupied, PeerIdInvalid):
+                try:
+                    await client.set_username(random_user)
+                    await client.send_message("me", f"✅ **شکار شد!**\n\n🆔 `@{random_user}`")
+                    USERNAME_SNIPER_ACTIVE[user_id] = False 
+                    if user_id in USERNAME_SNIPER_TASK: USERNAME_SNIPER_TASK[user_id].cancel()
+                    break
+                except Exception: pass
+            except Exception: pass
             
-            for res in results:
-                if res:
-                    if user_id not in FOUND_USERNAMES_CACHE: FOUND_USERNAMES_CACHE[user_id] = []
-                    # جلوگیری از تکراری
-                    if res not in FOUND_USERNAMES_CACHE[user_id]:
-                        FOUND_USERNAMES_CACHE[user_id].append(res)
-            
-            # وقفه بسیار کوتاه برای جلوگیری از بلاک شدن IP توسط t.me
-            await asyncio.sleep(0.5)
-
-async def username_sniper_manager(client, user_id, length, duration_min):
-    logging.info(f"Turbo Sniper started for {user_id}: len={length}, time={duration_min}m")
-    FOUND_USERNAMES_CACHE[user_id] = []
-    end_time = time.time() + (duration_min * 60)
-    
-    # اجرای ۵ ورکر همزمان برای سرعت وحشتناک بالا
-    workers = [asyncio.create_task(sniper_worker(user_id, length, end_time, client)) for _ in range(5)]
-    USERNAME_SNIPER_TASK[user_id] = workers # ذخیره برای کنسل کردن
-    
-    # منتظر ماندن تا پایان زمان یا لغو دستی
-    try:
-        await asyncio.gather(*workers)
-    except asyncio.CancelledError:
-        pass # لغو شد
-    
-    USERNAME_SNIPER_ACTIVE[user_id] = False
-    
-    # گزارش نهایی
-    found = FOUND_USERNAMES_CACHE.get(user_id, [])
-    if found:
-        msg = f"🏁 **شکار تمام شد!**\n\nتعداد پیدا شده: {len(found)}\n\n"
-        for i, uname in enumerate(found, 1):
-            msg += f"{i}. `@{uname}`\n"
-        msg += "\n✅ برای ثبت، دستور `ثبت [شماره]` را ارسال کنید."
-        await client.send_message("me", msg)
-    else:
-        await client.send_message("me", "❌ در مدت زمان تعیین شده، یوزرنیم آزادی با این مشخصات پیدا نشد.")
+            await asyncio.sleep(random.uniform(20, 40))
+        except FloodWait as e:
+            await asyncio.sleep(e.value + 10)
+        except Exception:
+            await asyncio.sleep(10)
 
 async def username_sniper_controller(client, message):
     user_id = client.me.id
     try:
-        args = message.text.split()
-        length = int(args[1])
-        duration = int(args[2])
-        
-        if not (5 <= length <= 32): return await message.edit_text("⚠️ طول: ۵ تا ۳۲.")
-        if not (1 <= duration <= 60): return await message.edit_text("⚠️ زمان: ۱ تا ۶۰ دقیقه.")
-        
-        if USERNAME_SNIPER_ACTIVE.get(user_id): return await message.edit_text("⚠️ مشغول است.")
+        length = int(message.text.split()[1])
+        if not (5 <= length <= 32):
+            await message.edit_text("⚠️ طول باید 5 تا 32 باشد.")
+            return
+        if USERNAME_SNIPER_ACTIVE.get(user_id):
+            await message.edit_text("⚠️ یک عملیات فعال است.")
+            return
 
         USERNAME_SNIPER_ACTIVE[user_id] = True
-        # این تسک اصلی را در بک‌گراند رها می‌کنیم
-        asyncio.create_task(username_sniper_manager(client, user_id, length, duration))
-        
-        await message.edit_text(f"🚀 **شکارچی توربو فعال شد!**\n\n🎯 طول: {length} حرف\n⏱ زمان: {duration} دقیقه\n🔍 روش: بررسی HTTP (بدون لیمیت اکانت)\n\nمنتظر بمانید تا لیست نهایی ارسال شود...")
-    except Exception:
-        await message.edit_text("⚠️ فرمت: `شکار [تعداد_حروف] [دقیقه]`")
+        task = asyncio.create_task(username_sniper_task(client, user_id, length))
+        USERNAME_SNIPER_TASK[user_id] = task
+        await message.edit_text(f"🎯 **شکارچی فعال شد (فقط حروف).**\nطول: {length}")
+    except ValueError:
+        await message.edit_text("⚠️ دستور اشتباه.")
 
-async def claim_username_controller(client, message):
-    user_id = client.me.id
-    try:
-        idx = int(message.text.split()[1]) - 1
-        found_list = FOUND_USERNAMES_CACHE.get(user_id, [])
-        
-        if not found_list or idx < 0 or idx >= len(found_list):
-            return await message.edit_text("⚠️ شماره نامعتبر یا لیست خالی است.")
-            
-        target_user = found_list[idx]
-        await message.edit_text(f"⏳ در حال تلاش برای ثبت `@{target_user}` ...")
-        
-        try:
-            await client.set_username(target_user)
-            await client.send_message("me", f"✅ **تبریک!** یوزرنیم `@{target_user}` با موفقیت روی اکانت شما ثبت شد.")
-        except UsernameOccupied:
-            await client.send_message("me", f"❌ متاسفانه `@{target_user}` قبلاً گرفته شده است (شاید معلق یا بن شده باشد).")
-        except Exception as e:
-            await client.send_message("me", f"❌ خطا در ثبت: {e}")
-            
-    except Exception:
-        await message.edit_text("⚠️ فرمت: `ثبت [شماره]`")
-
-async def stop_sniper_controller(client, message):
+async def stop_username_sniper_controller(client, message):
     user_id = client.me.id
     if USERNAME_SNIPER_ACTIVE.get(user_id):
         USERNAME_SNIPER_ACTIVE[user_id] = False
-        if user_id in USERNAME_SNIPER_TASK:
-            # کنسل کردن همه ورکرها
-            for t in USERNAME_SNIPER_TASK[user_id]: t.cancel()
-        await message.edit_text("🛑 عملیات متوقف شد. لیست تا این لحظه (اگر باشد) ارسال می‌شود.")
+        if user_id in USERNAME_SNIPER_TASK: USERNAME_SNIPER_TASK[user_id].cancel()
+        await message.edit_text("🛑 متوقف شد.")
     else:
         await message.edit_text("ℹ️ غیرفعال.")
 
-# --- Filters ---
+
+# --- Filters and Bot Setup ---
 async def is_enemy_filter(_, client, message):
-    return GLOBAL_ENEMY_STATUS.get(client.me.id) or (message.from_user and (message.from_user.id, message.chat.id) in ACTIVE_ENEMIES.get(client.me.id, set()))
+    user_id = client.me.id
+    if GLOBAL_ENEMY_STATUS.get(user_id, False): return True
+    return message.from_user and (message.from_user.id, message.chat.id) in ACTIVE_ENEMIES.get(user_id, set())
+
 is_enemy = filters.create(is_enemy_filter)
 
-async def start_bot_instance(session_string, phone, font_style, disable_clock):
+async def start_bot_instance(session_string: str, phone: str, font_style: str, disable_clock: bool = False):
     client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string, in_memory=True)
-    client.my_phone_number = phone
+    client.my_phone_number = phone 
+    
     try:
         await client.start()
-        uid = (await client.get_me()).id
-        USER_FONT_CHOICES[uid] = font_style
-        CLOCK_STATUS[uid] = not disable_clock
+        user_id = (await client.get_me()).id
+        try: async for _ in client.get_dialogs(limit=50): pass
+        except Exception: pass
+    except Exception as e:
+        logging.error(f"Session {phone} invalid: {e}")
+        if sessions_collection is not None: sessions_collection.delete_one({'phone_number': phone})
+        return
+
+    try:
+        if user_id in ACTIVE_BOTS:
+            for task in ACTIVE_BOTS[user_id][1]: task.cancel()
+            ACTIVE_BOTS.pop(user_id, None)
+            await asyncio.sleep(1)
         
-        # Handlers
+        USER_FONT_CHOICES[user_id] = font_style
+        CLOCK_STATUS[user_id] = not disable_clock
+        
         client.add_handler(MessageHandler(god_mode_handler, filters.text), group=-10)
         client.add_handler(MessageHandler(pv_lock_handler, filters.private & ~filters.me & ~filters.bot & ~filters.service), group=-5)
         client.add_handler(MessageHandler(auto_seen_handler, filters.private & ~filters.me), group=-4)
         client.add_handler(MessageHandler(incoming_message_manager, filters.all & ~filters.me), group=-3)
         client.add_handler(MessageHandler(outgoing_message_modifier, filters.text & filters.me & ~filters.reply), group=-1)
         
-        # Commands
-        cmds = {
-            r"^\s*راهنما\s*$": help_controller,
-            r"^\s*شکار \d+ \d+\s*$": username_sniper_controller,
-            r"^\s*ثبت \d+\s*$": claim_username_controller,
-            r"^\s*لغو شکار\s*$": stop_sniper_controller,
-            # Removed Add command
-        }
+        client.add_handler(MessageHandler(help_controller, filters.text & filters.me & filters.regex(r"^\s*راهنما\s*$")))
+        client.add_handler(MessageHandler(toggle_controller, filters.text & filters.me & filters.regex(r"^\s*(اینگیلیسی روشن|اینگیلیسی خاموش|روسی روشن|روسی خاموش|چینی روشن|چینی خاموش|بولد روشن|بولد خاموش|سین روشن|سین خاموش|منشی روشن|منشی خاموش|انتی لوگین روشن|انتی لوگین خاموش|دشمن همگانی روشن|دشمن همگانی خاموش|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش)\s*$")))
+        client.add_handler(MessageHandler(pv_lock_controller, filters.text & filters.me & filters.regex(r"^\s*(پیوی قفل|پیوی باز)\s*$")))
+        client.add_handler(MessageHandler(font_controller, filters.text & filters.me & filters.regex(r"^\s*(فونت|فونت \d+)\s*$")))
+        client.add_handler(MessageHandler(clock_controller, filters.text & filters.me & filters.regex(r"^\s*(ساعت روشن|ساعت خاموش)\s*$")))
+        client.add_handler(MessageHandler(enemy_controller, filters.text & filters.me & filters.regex(r"^\s*(دشمن روشن|دشمن خاموش)\s*$")))
+        client.add_handler(MessageHandler(list_enemies_controller, filters.text & filters.me & filters.regex(r"^\s*لیست دشمن\s*$")))
+        client.add_handler(MessageHandler(block_unblock_controller, filters.text & filters.reply & filters.me & filters.regex(r"^\s*(بلاک روشن|بلاک خاموش)\s*$")))
+        client.add_handler(MessageHandler(mute_unmute_controller, filters.text & filters.reply & filters.me & filters.regex(r"^\s*(سکوت روشن|سکوت خاموش)\s*$")))
+        client.add_handler(MessageHandler(auto_reaction_controller, filters.text & filters.reply & filters.me & filters.regex(r"^\s*(ریاکشن .*|ریاکشن خاموش)\s*$")))
+        client.add_handler(MessageHandler(copy_profile_controller, filters.text & filters.me & filters.regex(r"^\s*(کپی روشن|کپی خاموش)\s*$")))
+        client.add_handler(MessageHandler(save_message_controller, filters.text & filters.reply & filters.me & filters.regex(r"^\s*ذخیره\s*$")))
+        client.add_handler(MessageHandler(repeat_message_controller, filters.text & filters.reply & filters.me & filters.regex(r"^\s*تکرار \d+\s*$")))
+        client.add_handler(MessageHandler(delete_messages_controller, filters.text & filters.me & filters.regex(r"^\s*حذف \d+\s*$")))
+        client.add_handler(MessageHandler(game_controller, filters.text & filters.me & filters.regex(r"^\s*(تاس|تاس \d+|بولینگ)\s*$")))
         
-        client.add_handler(MessageHandler(help_controller, filters.regex(r"^\s*راهنما\s*$") & filters.me))
-        client.add_handler(MessageHandler(username_sniper_controller, filters.regex(r"^\s*شکار \d+ \d+\s*$") & filters.me))
-        client.add_handler(MessageHandler(claim_username_controller, filters.regex(r"^\s*ثبت \d+\s*$") & filters.me))
-        client.add_handler(MessageHandler(stop_sniper_controller, filters.regex(r"^\s*لغو شکار\s*$") & filters.me))
-        
-        client.add_handler(MessageHandler(toggle_controller, filters.regex(r"^\s*(اینگیلیسی روشن|اینگیلیسی خاموش|روسی روشن|روسی خاموش|چینی روشن|چینی خاموش|بولد روشن|بولد خاموش|سین روشن|سین خاموش|منشی روشن|منشی خاموش|انتی لوگین روشن|انتی لوگین خاموش|دشمن همگانی روشن|دشمن همگانی خاموش|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش)\s*$") & filters.me))
-        client.add_handler(MessageHandler(font_controller, filters.regex(r"^\s*(فونت|فونت \d+)\s*$") & filters.me))
-        client.add_handler(MessageHandler(clock_controller, filters.regex(r"^\s*(ساعت روشن|ساعت خاموش)\s*$") & filters.me))
-        client.add_handler(MessageHandler(enemy_controller, filters.regex(r"^\s*(دشمن روشن|دشمن خاموش)\s*$") & filters.me))
-        client.add_handler(MessageHandler(list_enemies_controller, filters.regex(r"^\s*لیست دشمن\s*$") & filters.me))
-        client.add_handler(MessageHandler(pv_lock_controller, filters.regex(r"^\s*(پیوی قفل|پیوی باز)\s*$") & filters.me))
-        
+        client.add_handler(MessageHandler(username_sniper_controller, filters.text & filters.me & filters.regex(r"^\s*حرف \d+\s*$")))
+        client.add_handler(MessageHandler(stop_username_sniper_controller, filters.text & filters.me & filters.regex(r"^\s*لغو حرف\s*$")))
+
         client.add_handler(MessageHandler(enemy_handler, is_enemy & ~filters.me), group=1)
         client.add_handler(MessageHandler(secretary_auto_reply_handler, filters.private & ~filters.me & ~filters.service), group=1)
 
-        asyncio.create_task(update_profile_clock(client, uid))
-        asyncio.create_task(anti_login_task(client, uid))
-        asyncio.create_task(status_action_task(client, uid))
-        asyncio.create_task(db_integrity_task(client, uid, phone))
-        
-        ACTIVE_BOTS[uid] = (client, [])
-        logging.info(f"Bot active: {uid}")
-        
+        tasks = [
+            asyncio.create_task(update_profile_clock(client, user_id)),
+            asyncio.create_task(anti_login_task(client, user_id)),
+            asyncio.create_task(status_action_task(client, user_id)),
+            asyncio.create_task(db_integrity_task(client, user_id, phone))
+        ]
+        ACTIVE_BOTS[user_id] = (client, tasks)
+        logging.info(f"Bot started for {user_id}")
     except Exception as e:
-        logging.error(f"Error starting {phone}: {e}")
+        logging.error(f"Start failed: {e}")
 
 # --- Web Section (Flask) ---
-HTML_TEMPLATE = """<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>سلف بات</title></head><body><h1>Bot Running</h1></body></html>"""
-def get_font_previews(): return {} # Placeholder
+HTML_TEMPLATE = """
+<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>سلف بات تلگرام</title><style>@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');body{font-family:'Vazirmatn',sans-serif;background-color:#f0f2f5;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;}.container{background:white;padding:30px 40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);text-align:center;width:100%;max-width:480px;}h1{color:#333;margin-bottom:20px;font-size:1.5em;}p{color:#666;line-height:1.6;}form{display:flex;flex-direction:column;gap:15px;margin-top:20px;}input[type="tel"],input[type="text"],input[type="password"]{padding:12px;border:1px solid #ddd;border-radius:8px;font-size:16px;text-align:left;direction:ltr;}button{padding:12px;background-color:#007bff;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;transition:background-color .2s;}.error{color:#d93025;margin-top:15px;font-weight:bold;}label{font-weight:bold;color:#555;display:block;margin-bottom:5px;text-align:right;}.font-options{border:1px solid #ddd;border-radius:8px;overflow:hidden;}.font-option{display:flex;align-items:center;padding:12px;border-bottom:1px solid #ddd;cursor:pointer;}.font-option:last-child{border-bottom:none;}.font-option input[type="radio"]{margin-left:15px;}.font-option label{display:flex;justify-content:space-between;align-items:center;width:100%;font-weight:normal;cursor:pointer;}.font-option .preview{font-size:1.3em;font-weight:bold;direction:ltr;color:#0056b3;}.success{color:#1e8e3e;}.checkbox-option{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px;padding:8px;background-color:#f8f9fa;border-radius:8px;}.checkbox-option label{margin-bottom:0;font-weight:normal;cursor:pointer;color:#444;}</style></head><body><div class="container">
+{% if step == 'GET_PHONE' %}<h1>ورود به سلف بات</h1><p>شماره و تنظیمات خود را انتخاب کنید تا ربات فعال شود.</p>{% if error_message %}<p class="error">{{ error_message }}</p>{% endif %}<form action="{{ url_for('login') }}" method="post"><input type="hidden" name="action" value="phone"><div><label for="phone">شماره تلفن (با کد کشور)</label><input type="tel" id="phone" name="phone_number" placeholder="+989123456789" required autofocus></div><div><label>استایل فونت ساعت</label><div class="font-options">{% for name, data in font_previews.items() %}<div class="font-option" onclick="document.getElementById('font-{{ data.style }}').checked = true;"><input type="radio" name="font_style" value="{{ data.style }}" id="font-{{ data.style }}" {% if loop.first %}checked{% endif %}><label for="font-{{ data.style }}"><span>{{ name }}</span><span class="preview">{{ data.preview }}</span></label></div>{% endfor %}</div></div><div class="checkbox-option"><input type="checkbox" id="disable_clock" name="disable_clock"><label for="disable_clock">فعال‌سازی بدون ساعت</label></div><button type="submit">ارسال کد تایید</button></form>
+{% elif step == 'GET_CODE' %}<h1>کد تایید</h1><p>کدی به تلگرام شما با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>{% if error_message %}<p class="error">{{ error_message }}</p>{% endif %}<form action="{{ url_for('login') }}" method="post"><input type="hidden" name="action" value="code"><input type="text" name="code" placeholder="کد تایید" required><button type="submit">تایید کد</button></form>
+{% elif step == 'GET_PASSWORD' %}<h1>رمز دو مرحله‌ای</h1><p>حساب شما نیاز به رمز تایید دو مرحله‌ای دارد.</p>{% if error_message %}<p class="error">{{ error_message }}</p>{% endif %}<form action="{{ url_for('login') }}" method="post"><input type="hidden" name="action" value="password"><input type="password" name="password" placeholder="رمز عبور دو مرحله ای" required><button type="submit">ورود</button></form>
+{% elif step == 'SHOW_SUCCESS' %}<h1>✅ ربات فعال شد!</h1><p>ربات با موفقیت فعال شد. برای دسترسی به قابلیت‌ها، در تلگرام پیام `راهنما` را ارسال کنید.</p><form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">خروج و ورود مجدد</button></form>{% endif %}</div></body></html>
+"""
+
+def get_font_previews():
+    sample_time = "12:34"
+    return {FONT_DISPLAY_NAMES[key]: {"style": key, "preview": stylize_time(sample_time, key)} for key in FONT_KEYS_ORDER}
 
 async def cleanup_client(phone):
-    if c := ACTIVE_CLIENTS.pop(phone, None):
-        if c.is_connected: await c.disconnect()
+    if client := ACTIVE_CLIENTS.pop(phone, None):
+        if client.is_connected: await client.disconnect()
 
 @app_flask.route('/')
-def home(): return render_template_string(HTML_TEMPLATE)
+def home():
+    session.clear()
+    return render_template_string(HTML_TEMPLATE, step='GET_PHONE', font_previews=get_font_previews())
 
 @app_flask.route('/login', methods=['POST'])
 def login():
-    # Placeholder for login route
-    return "Login Logic Active" 
+    action = request.form.get('action')
+    phone = session.get('phone_number')
+    try:
+        if not EVENT_LOOP.is_running():
+            raise RuntimeError("Event loop is not running.")
+            
+        if action == 'phone':
+            session['phone_number'] = request.form.get('phone_number')
+            session['font_style'] = request.form.get('font_style')
+            session['disable_clock'] = 'on' == request.form.get('disable_clock')
+            future = asyncio.run_coroutine_threadsafe(send_code_task(session['phone_number']), EVENT_LOOP)
+            future.result(45)
+            return render_template_string(HTML_TEMPLATE, step='GET_CODE', phone_number=session['phone_number'])
+        elif action == 'code':
+            future = asyncio.run_coroutine_threadsafe(sign_in_task(phone, request.form.get('code')), EVENT_LOOP)
+            next_step = future.result(45)
+            if next_step == 'GET_PASSWORD':
+                return render_template_string(HTML_TEMPLATE, step='GET_PASSWORD', phone_number=phone)
+            return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
+        elif action == 'password':
+            future = asyncio.run_coroutine_threadsafe(check_password_task(phone, request.form.get('password')), EVENT_LOOP)
+            future.result(45)
+            return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
+    except Exception as e:
+        if phone: 
+            try:
+                if EVENT_LOOP.is_running():
+                    asyncio.run_coroutine_threadsafe(cleanup_client(phone), EVENT_LOOP)
+            except RuntimeError:
+                pass # Loop is already closed
+        logging.error(f"Error during '{action}': {e}", exc_info=True)
+        error_map = {
+            (PhoneCodeInvalid, PasswordHashInvalid): "کد یا رمز وارد شده اشتباه است.",
+            (PhoneNumberInvalid, TypeError): "شماره تلفن نامعتبر است.",
+            PhoneCodeExpired: "کد تایید منقضی شده، دوباره تلاش کنید.",
+            FloodWait: f"محدودیت تلگرام. لطفا {getattr(e, 'value', 5)} ثانیه دیگر تلاش کنید."
+        }
+        error_msg = "خطای پیش‌بینی نشده: " + str(e)
+        current_step = 'GET_PHONE'
+        for err_types, msg in error_map.items():
+            if isinstance(e, err_types):
+                error_msg = msg
+                current_step = 'GET_CODE' if isinstance(e, PhoneCodeInvalid) else 'GET_PASSWORD'
+                if isinstance(e, (PhoneNumberInvalid, TypeError, PhoneCodeExpired)): current_step = 'GET_PHONE'
+                break
+        if current_step == 'GET_PHONE': session.clear()
+        return render_template_string(HTML_TEMPLATE, step=current_step, error_message=error_msg, phone_number=phone, font_previews=get_font_previews())
+    return redirect(url_for('home'))
+
+async def send_code_task(phone):
+    await cleanup_client(phone)
+    client = Client(f"user_{phone}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    ACTIVE_CLIENTS[phone] = client
+    await client.connect()
+    session['phone_code_hash'] = (await client.send_code(phone)).phone_code_hash
+
+async def sign_in_task(phone, code):
+    client = ACTIVE_CLIENTS.get(phone)
+    if not client: raise Exception("Session expired.")
+    try:
+        await client.sign_in(phone, session['phone_code_hash'], code)
+        session_str = await client.export_session_string()
+        
+        if sessions_collection is not None:
+            sessions_collection.update_one(
+                {'phone_number': phone},
+                {'$set': {
+                    'session_string': session_str,
+                    'font_style': session.get('font_style'),
+                    'disable_clock': session.get('disable_clock', False)
+                }},
+                upsert=True
+            )
+            
+        await start_bot_instance(session_str, phone, session.get('font_style'), session.get('disable_clock', False))
+        await cleanup_client(phone)
+    except SessionPasswordNeeded:
+        return 'GET_PASSWORD'
+
+async def check_password_task(phone, password):
+    client = ACTIVE_CLIENTS.get(phone)
+    if not client: raise Exception("Session expired.")
+    try:
+        await client.check_password(password)
+        session_str = await client.export_session_string()
+
+        if sessions_collection is not None:
+            sessions_collection.update_one(
+                {'phone_number': phone},
+                {'$set': {
+                    'session_string': session_str,
+                    'font_style': session.get('font_style'),
+                    'disable_clock': session.get('disable_clock', False)
+                }},
+                upsert=True
+            )
+
+        await start_bot_instance(session_str, phone, session.get('font_style'), session.get('disable_clock', False))
+    finally:
+        await cleanup_client(phone)
 
 def run_flask():
-    app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host='0.0.0.0', port=port)
 
 def run_asyncio_loop():
     global EVENT_LOOP
     asyncio.set_event_loop(EVENT_LOOP)
-    if sessions_collection:
+    
+    if sessions_collection is not None:
+        logging.info("Found MongoDB collection, attempting to auto-login from database...")
         for doc in sessions_collection.find():
-             EVENT_LOOP.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style'), doc.get('disable_clock')))
-    EVENT_LOOP.run_forever()
+            try:
+                session_string = doc['session_string']
+                phone = doc.get('phone_number', f"db_session_{doc['_id']}")
+                font_style = doc.get('font_style', 'stylized')
+                disable_clock = doc.get('disable_clock', False)
+                logging.info(f"Auto-starting session for {phone}...")
+                EVENT_LOOP.create_task(start_bot_instance(session_string, phone, font_style, disable_clock))
+            except Exception as e:
+                logging.error(f"Failed to auto-start session for {doc.get('phone_number')}: {e}")
+
+    try:
+        EVENT_LOOP.run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Event loop stopped by user.")
+    finally:
+        logging.info("Closing event loop.")
+        if EVENT_LOOP.is_running():
+            tasks = asyncio.all_tasks(loop=EVENT_LOOP)
+            for task in tasks:
+                task.cancel()
+            
+            async def gather_tasks():
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Run the gathering task to ensure cancellations are processed
+            EVENT_LOOP.run_until_complete(gather_tasks())
+            EVENT_LOOP.close()
+
 
 if __name__ == "__main__":
-    Thread(target=run_asyncio_loop, daemon=True).start()
+    logging.info("Starting Telegram Self Bot Service...")
+    loop_thread = Thread(target=run_asyncio_loop, daemon=True)
+    loop_thread.start()
     run_flask()

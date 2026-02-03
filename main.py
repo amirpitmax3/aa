@@ -175,27 +175,47 @@ def generate_random_username(length):
 
 async def check_username_availability_web(username):
     """
-    Checks availability via t.me website to avoid API limits.
-    Returns True if likely available, False otherwise.
+    Checks availability via t.me website and fragment.com to avoid API limits.
+    Returns True if likely available for FREE registration, False otherwise.
     """
-    url = f"https://t.me/{username}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=5) as response:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            # 1. Check t.me (Telegram Web)
+            # If a user exists, t.me usually shows the name, photo, or description.
+            # If it's free, it often shows a generic 'View in Telegram' page without specific meta tags.
+            url_tme = f"https://t.me/{username}"
+            async with session.get(url_tme, timeout=5) as response:
                 text = await response.text()
-                # If the title is "Telegram: Contact @username", it usually exists.
-                # If it's available, it might redirect or show a generic page.
-                # A robust check checks for specific meta tags indicating a profile exists.
                 
-                # Method 1: Check for "View in Telegram" button which usually appears for existing entities
-                if f"tg://resolve?domain={username}" in text:
-                    return False # Exists
+                # Markers that indicate a username is TAKEN or banned:
+                # 'tgme_page_title' usually contains the display name of the entity
+                # 'tgme_page_photo' usually contains the profile picture
+                # If these are present, the username is likely taken.
+                if 'tgme_page_title' in text or 'tgme_page_photo' in text:
+                    return False
+
+            # 2. Check Fragment (User request)
+            # If it's not on t.me, it might be on Fragment (Premium/Auction).
+            # We want FREE usernames to register. So if it IS on Fragment, it's NOT available for free.
+            url_fragment = f"https://fragment.com/username/{username}"
+            async with session.get(url_fragment, timeout=5) as response:
+                # If fragment page exists (200), it means it's a premium/auction username.
+                if response.status == 200:
+                    frag_text = await response.text()
+                    # Double check content to be sure it's an auction page
+                    if "Available for auction" in frag_text or "Sold" in frag_text or "On auction" in frag_text or "Taken" in frag_text:
+                        return False
                 
-                # Method 2: Check for specific description for non-existing pages
-                # This part is tricky as Telegram changes pages. 
-                # However, if 'tg://resolve' is NOT in the body, it's a strong indicator it's free or banned.
-                return True
-    except:
+                # If Fragment redirects or returns 404, it's not a premium username.
+                # Combined with the t.me check returning "not found", it implies it's Free.
+                
+        return True # Likely free
+    except Exception as e:
+        # If network error, assume not available to avoid false positives
         return False
 
 # --- Main Bot Functions ---

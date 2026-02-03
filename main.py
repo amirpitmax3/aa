@@ -7,7 +7,8 @@ import time
 import string
 import random
 from urllib.parse import quote
-from pyrogram import Client, filters, functions
+from pyrogram import Client, filters
+from pyrogram.raw import functions  # Correct import location
 from pyrogram.handlers import MessageHandler
 from pyrogram.enums import ChatType, ChatAction
 from pyrogram.errors import (
@@ -33,6 +34,7 @@ API_ID = 28190856
 API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 
 # --- Database Setup (MongoDB) ---
+# Updated URI per user request
 MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None

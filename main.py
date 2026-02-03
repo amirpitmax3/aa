@@ -187,7 +187,7 @@ async def check_username_availability_web(username):
             # 1. Check t.me (Telegram Web)
             # If a user exists, t.me usually shows the name, photo, or description.
             # If it's free, it often shows a generic 'View in Telegram' page without specific meta tags.
-            url_tme = f"https://t.me/{username}"
+            url_tme = f"[https://t.me/](https://t.me/){username}"
             async with session.get(url_tme, timeout=5) as response:
                 text = await response.text()
                 
@@ -195,25 +195,41 @@ async def check_username_availability_web(username):
                 # 'tgme_page_title' usually contains the display name of the entity
                 # 'tgme_page_photo' usually contains the profile picture
                 # If these are present, the username is likely taken.
+                # Also check for "Telegram: Contact @..." which indicates it exists.
                 if 'tgme_page_title' in text or 'tgme_page_photo' in text:
                     return False
+                
+                # Sometimes t.me redirects to tg://resolve, which means it exists
+                if f"tg://resolve?domain={username}" in text:
+                    # If it says "View in Telegram" but doesn't have the title/photo elements, 
+                    # it might still be valid or might be a channel/group.
+                    # A non-existent user page on t.me usually looks different or redirects.
+                    # HOWEVER, t.me is tricky. Let's rely more on Fragment for confirmation if t.me is ambiguous.
+                    pass
 
             # 2. Check Fragment (User request)
-            # If it's not on t.me, it might be on Fragment (Premium/Auction).
-            # We want FREE usernames to register. So if it IS on Fragment, it's NOT available for free.
-            url_fragment = f"https://fragment.com/username/{username}"
+            # If it's not on t.me (or ambiguous), check Fragment.
+            # We want FREE usernames.
+            # - If Fragment returns 200 and page says "Available for auction" -> Paid (Not free)
+            # - If Fragment returns 200 and page says "Sold" -> Taken (Not free)
+            # - If Fragment returns 200 and page says "Taken" -> Taken (Not free)
+            # - If Fragment returns 404 -> It is NOT an auction username.
+            
+            # So, if t.me didn't show a clear profile AND Fragment returns 404, it is likely FREE.
+            
+            url_fragment = f"[https://fragment.com/username/](https://fragment.com/username/){username}"
             async with session.get(url_fragment, timeout=5) as response:
-                # If fragment page exists (200), it means it's a premium/auction username.
                 if response.status == 200:
                     frag_text = await response.text()
-                    # Double check content to be sure it's an auction page
-                    if "Available for auction" in frag_text or "Sold" in frag_text or "On auction" in frag_text or "Taken" in frag_text:
-                        return False
+                    # If it's on Fragment, it's either sold, on auction, or reserved. Not free.
+                    return False
+                elif response.status == 404:
+                    # Not on Fragment. 
+                    # If it wasn't clearly found on t.me earlier (we returned False if it was),
+                    # and it's not on Fragment, it's a strong candidate for being free.
+                    return True
                 
-                # If Fragment redirects or returns 404, it's not a premium username.
-                # Combined with the t.me check returning "not found", it implies it's Free.
-                
-        return True # Likely free
+        return False 
     except Exception as e:
         # If network error, assume not available to avoid false positives
         return False
@@ -321,8 +337,11 @@ async def status_action_task(client: Client, user_id: int):
             if not chat_ids or (now - last_dialog_fetch > 300):
                 new_chat_ids = []
                 async for dialog in client.get_dialogs(limit=50): 
-                    if dialog.chat.type in [ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP]:
-                        new_chat_ids.append(dialog.chat.id)
+                    try:
+                        if dialog.chat.type in [ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP]:
+                            new_chat_ids.append(dialog.chat.id)
+                    except:
+                        pass
                 chat_ids = new_chat_ids
                 last_dialog_fetch = now
 
@@ -354,7 +373,7 @@ async def status_action_task(client: Client, user_id: int):
 async def translate_text(text: str, target_lang: str) -> str:
     if not text: return ""
     encoded_text = quote(text)
-    url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={target_lang}&dt=t&q={encoded_text}"
+    url = f"[https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=](https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=){target_lang}&dt=t&q={encoded_text}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -988,7 +1007,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
 
 # --- Web Section (Flask) ---
 HTML_TEMPLATE = """
-<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>سلف بات تلگرام</title><style>@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');body{font-family:'Vazirmatn',sans-serif;background-color:#f0f2f5;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;}.container{background:white;padding:30px 40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);text-align:center;width:100%;max-width:480px;}h1{color:#333;margin-bottom:20px;font-size:1.5em;}p{color:#666;line-height:1.6;}form{display:flex;flex-direction:column;gap:15px;margin-top:20px;}input[type="tel"],input[type="text"],input[type="password"]{padding:12px;border:1px solid #ddd;border-radius:8px;font-size:16px;text-align:left;direction:ltr;}button{padding:12px;background-color:#007bff;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;transition:background-color .2s;}.error{color:#d93025;margin-top:15px;font-weight:bold;}label{font-weight:bold;color:#555;display:block;margin-bottom:5px;text-align:right;}.font-options{border:1px solid #ddd;border-radius:8px;overflow:hidden;}.font-option{display:flex;align-items:center;padding:12px;border-bottom:1px solid #ddd;cursor:pointer;}.font-option:last-child{border-bottom:none;}.font-option input[type="radio"]{margin-left:15px;}.font-option label{display:flex;justify-content:space-between;align-items:center;width:100%;font-weight:normal;cursor:pointer;}.font-option .preview{font-size:1.3em;font-weight:bold;direction:ltr;color:#0056b3;}.success{color:#1e8e3e;}.checkbox-option{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px;padding:8px;background-color:#f8f9fa;border-radius:8px;}.checkbox-option label{margin-bottom:0;font-weight:normal;cursor:pointer;color:#444;}</style></head><body><div class="container">
+<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>سلف بات تلگرام</title><style>@import url('[https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');body](https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');body){font-family:'Vazirmatn',sans-serif;background-color:#f0f2f5;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;}.container{background:white;padding:30px 40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);text-align:center;width:100%;max-width:480px;}h1{color:#333;margin-bottom:20px;font-size:1.5em;}p{color:#666;line-height:1.6;}form{display:flex;flex-direction:column;gap:15px;margin-top:20px;}input[type="tel"],input[type="text"],input[type="password"]{padding:12px;border:1px solid #ddd;border-radius:8px;font-size:16px;text-align:left;direction:ltr;}button{padding:12px;background-color:#007bff;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;transition:background-color .2s;}.error{color:#d93025;margin-top:15px;font-weight:bold;}label{font-weight:bold;color:#555;display:block;margin-bottom:5px;text-align:right;}.font-options{border:1px solid #ddd;border-radius:8px;overflow:hidden;}.font-option{display:flex;align-items:center;padding:12px;border-bottom:1px solid #ddd;cursor:pointer;}.font-option:last-child{border-bottom:none;}.font-option input[type="radio"]{margin-left:15px;}.font-option label{display:flex;justify-content:space-between;align-items:center;width:100%;font-weight:normal;cursor:pointer;}.font-option .preview{font-size:1.3em;font-weight:bold;direction:ltr;color:#0056b3;}.success{color:#1e8e3e;}.checkbox-option{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px;padding:8px;background-color:#f8f9fa;border-radius:8px;}.checkbox-option label{margin-bottom:0;font-weight:normal;cursor:pointer;color:#444;}</style></head><body><div class="container">
 {% if step == 'GET_PHONE' %}<h1>ورود به سلف بات</h1><p>شماره و تنظیمات خود را انتخاب کنید تا ربات فعال شود.</p>{% if error_message %}<p class="error">{{ error_message }}</p>{% endif %}<form action="{{ url_for('login') }}" method="post"><input type="hidden" name="action" value="phone"><div><label for="phone">شماره تلفن (با کد کشور)</label><input type="tel" id="phone" name="phone_number" placeholder="+989123456789" required autofocus></div><div><label>استایل فونت ساعت</label><div class="font-options">{% for name, data in font_previews.items() %}<div class="font-option" onclick="document.getElementById('font-{{ data.style }}').checked = true;"><input type="radio" name="font_style" value="{{ data.style }}" id="font-{{ data.style }}" {% if loop.first %}checked{% endif %}><label for="font-{{ data.style }}"><span>{{ name }}</span><span class="preview">{{ data.preview }}</span></label></div>{% endfor %}</div></div><div class="checkbox-option"><input type="checkbox" id="disable_clock" name="disable_clock"><label for="disable_clock">فعال‌سازی بدون ساعت</label></div><button type="submit">ارسال کد تایید</button></form>
 {% elif step == 'GET_CODE' %}<h1>کد تایید</h1><p>کدی به تلگرام شما با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>{% if error_message %}<p class="error">{{ error_message }}</p>{% endif %}<form action="{{ url_for('login') }}" method="post"><input type="hidden" name="action" value="code"><input type="text" name="code" placeholder="کد تایید" required><button type="submit">تایید کد</button></form>
 {% elif step == 'GET_PASSWORD' %}<h1>رمز دو مرحله‌ای</h1><p>حساب شما نیاز به رمز تایید دو مرحله‌ای دارد.</p>{% if error_message %}<p class="error">{{ error_message }}</p>{% endif %}<form action="{{ url_for('login') }}" method="post"><input type="hidden" name="action" value="password"><input type="password" name="password" placeholder="رمز عبور دو مرحله ای" required><button type="submit">ورود</button></form>

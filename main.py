@@ -6,7 +6,7 @@ import aiohttp
 import time
 import json
 import random
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse, parse_qs
 from pyrogram import Client, filters, idle
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler, InlineQueryHandler
 from pyrogram.enums import ChatType, ChatAction
@@ -281,76 +281,107 @@ async def search_and_download_media(client, message, query, media_type='video'):
     """
     status_msg = await message.reply_text(f"🔍 در حال جستجو برای: {query} ...")
     try:
-        # 1. Search Logic (Using DuckDuckGo HTML as it's easier to scrape without API keys)
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-        search_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
         
         found_url = None
         
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(search_url) as resp:
-                if resp.status != 200:
-                    await status_msg.edit_text("❌ خطا در اتصال به موتور جستجو.")
-                    return
-                html = await resp.text()
+            # 1. Strategy for Images: Google Images Scraping (Better results)
+            if media_type == 'image':
+                search_url = f"https://www.google.com/search?q={quote(query)}&tbm=isch"
+                async with session.get(search_url) as resp:
+                    if resp.status == 200:
+                        html = await resp.text()
+                        # Extract image src (looking for http links in src attributes)
+                        # Google often serves thumbnails as encrypted-tbn0.gstatic.com
+                        img_links = re.findall(r'src="(https?://[^"]+)"', html)
+                        
+                        for link in img_links:
+                            # Filter out small icons or irrelevant google scripts if possible, 
+                            # but gstatic/encrypted-tbn0 are actually good valid thumbnails.
+                            if 'encrypted-tbn0.gstatic.com' in link or link.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                                found_url = link
+                                break # Found a valid image link
+            
+            # 2. Strategy for Videos: DuckDuckGo with filetype:mp4
+            else:
+                # Add filetype to query to find actual files
+                search_query = f"{query} filetype:mp4"
+                search_url = f"https://html.duckduckgo.com/html/?q={quote(search_query)}"
                 
-        # Extract all potential links
-        links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
-        
-        # Iterate through links to find a suitable one
-        for link in links:
-            link = unquote(link)
-            if any(x in link for x in ["duckduckgo", "google", "yandex", "adserver"]): continue
-            
-            link_lower = link.lower()
-            is_target = False
-            
-            if media_type == 'video':
-                if link_lower.endswith(('.mp4', '.mkv', '.mov')):
-                    is_target = True
-            elif media_type == 'image':
-                if link_lower.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                    is_target = True
-            
-            if is_target:
-                # Check file size before downloading fully
-                try:
-                    async with aiohttp.ClientSession() as dl_session:
-                        # Use a timeout to skip slow links quickly
-                        async with dl_session.get(link, timeout=10) as dl_resp:
-                            if dl_resp.status == 200:
-                                content_length = int(dl_resp.headers.get('Content-Length', 0))
-                                
-                                # 🔴 CHANGE: Skip if file is too big (> 50MB) and try next link
-                                if content_length > 50 * 1024 * 1024:
-                                    continue 
-                                
-                                # If size is okay or unknown (0), try to download
-                                await status_msg.edit_text("⬇️ فایل مناسب پیدا شد. در حال دانلود ...")
-                                file_data = await dl_resp.read()
-                                
-                                # Double check size after download if header was missing
-                                if len(file_data) > 50 * 1024 * 1024:
+                async with session.get(search_url) as resp:
+                    if resp.status == 200:
+                        html = await resp.text()
+                        
+                        # Extract all links
+                        links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
+                        
+                        for link in links:
+                            link = unquote(link)
+                            
+                            # Handle DuckDuckGo Redirects (uddg parameter)
+                            if "duckduckgo.com/l/?" in link:
+                                try:
+                                    parsed = urlparse(link)
+                                    qs = parse_qs(parsed.query)
+                                    if 'uddg' in qs:
+                                        link = qs['uddg'][0]
+                                except:
                                     continue
+                            
+                            # Skip search engine links
+                            if any(x in link for x in ["duckduckgo", "google", "yandex", "adserver"]): continue
+                            
+                            # Check extension
+                            if link.lower().endswith(('.mp4', '.mkv', '.mov')):
+                                # Validate size
+                                try:
+                                    async with session.head(link, timeout=5) as head_resp:
+                                        content_length = int(head_resp.headers.get('Content-Length', 0))
+                                        
+                                        # If > 50MB, skip and try next
+                                        if content_length > 50 * 1024 * 1024:
+                                            continue
+                                        
+                                        # Found valid video!
+                                        found_url = link
+                                        break
+                                except:
+                                    continue # If head fails, skip
+                
+            if found_url:
+                await status_msg.edit_text("⬇️ فایل مناسب پیدا شد. در حال دانلود ...")
+                
+                async with session.get(found_url) as dl_resp:
+                    if dl_resp.status == 200:
+                        # Final size check (in case HEAD was wrong/missing)
+                        content_length = int(dl_resp.headers.get('Content-Length', 0))
+                        if content_length > 50 * 1024 * 1024:
+                            await status_msg.edit_text("❌ فایل پیدا شده حجم بالایی داشت. لطفاً دقیق‌تر جستجو کنید.")
+                            return
 
-                                file_name = f"download_{int(time.time())}.{'mp4' if media_type=='video' else 'jpg'}"
-                                with open(file_name, 'wb') as f:
-                                    f.write(file_data)
-                                
-                                await status_msg.edit_text("📤 در حال آپلود ...")
-                                if media_type == 'video':
-                                    await client.send_video(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
-                                else:
-                                    await client.send_photo(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
-                                
-                                os.remove(file_name)
-                                await status_msg.delete()
-                                return # Success! Exit function.
-                except Exception as e:
-                    # If link fails, just ignore and try next one
-                    continue
+                        file_data = await dl_resp.read()
+                        
+                        # Double check downloaded size
+                        if len(file_data) > 50 * 1024 * 1024:
+                             await status_msg.edit_text("❌ حجم فایل دانلود شده بیش از 50 مگابایت است.")
+                             return
 
-        await status_msg.edit_text(f"❌ فایل مناسبی با حجم زیر 50 مگابایت برای '{query}' پیدا نشد.")
+                        file_name = f"download_{int(time.time())}.{'mp4' if media_type=='video' else 'jpg'}"
+                        with open(file_name, 'wb') as f:
+                            f.write(file_data)
+                        
+                        await status_msg.edit_text("📤 در حال آپلود ...")
+                        if media_type == 'video':
+                            await client.send_video(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
+                        else:
+                            await client.send_photo(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
+                        
+                        os.remove(file_name)
+                        await status_msg.delete()
+                        return
+
+        await status_msg.edit_text(f"❌ فایل مناسبی با حجم زیر 50 مگابایت برای '{query}' پیدا نشد. (برای ویدیو مطمئن شوید فایل MP4 در وب موجود است)")
         
     except Exception as e:
         logging.error(f"Search Download Error: {e}")

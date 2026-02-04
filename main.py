@@ -30,15 +30,6 @@ from pymongo.server_api import ServerApi
 import certifi
 import pyrogram.utils 
 
-# --- Import Pornhub API (Try/Except to prevent crash if not installed) ---
-try:
-    from pornhub_api import PornhubApi
-    from pornhub_api.backends.aiohttp import AioHttpBackend
-    PH_INSTALLED = True
-except ImportError:
-    PH_INSTALLED = False
-    logging.warning("⚠️ کتابخانه PornhubApi نصب نیست. لطفاً نصب کنید: pip install pornhub-api")
-
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
 
@@ -132,9 +123,9 @@ HELP_TEXT = """
 ⚠️ تنظیمات اصلی (ساعت، فونت، منشی و...) فقط از طریق دستور **`پنل`** قابل دسترسی هستند.
 
 **✦ دانلودر و سرچ پیشرفته 🔞**
-  » `دانلود [متن]` (فقط از Pornhub)
-  » `عکس [متن]` (فقط از گوگل، بدون سانسور)
-  * مثال: `دانلود فیلم ایرانی` یا `عکس طبیعت`.
+  » `دانلود [متن]` (دانلودر اختصاصی از سایت‌های خاص)
+  » `عکس [متن]` (جستجوی عکس با کیفیت بالا بدون سانسور)
+  * مثال: `دانلود فیلم` یا `عکس ماشین`.
 
 **✦ هوش مصنوعی**
   » `منشی روشن` | `منشی خاموش` (پاسخگویی هوشمند)
@@ -285,130 +276,120 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
 # --- Advanced Search & Download Helper ---
 async def search_and_download_media(client, message, query, media_type='video'):
     """
-    1. Images: STRICTLY Google Images (safe=off). No DuckDuckGo.
-    2. Videos: STRICTLY Pornhub API -> Website Scraper. No other sources.
+    1. Images: YANDEX IMAGES (Uncensored).
+    2. Videos: PORNHUB Direct Scraping (No API library, just requests).
     """
-    status_msg = await message.reply_text(f"🔍 در حال جستجو برای: {query} ...")
+    status_msg = await message.reply_text(f"🔍 در حال جستجو (مخصوص) برای: {query} ...")
     try:
+        # Standard header to mimic a real browser
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Cookie": "age_verified=1" # Needed for some sites
         }
         
         found_file_path = None
-        found_extension = "mp4" if media_type == 'video' else "jpg"
         
         async with aiohttp.ClientSession(headers=headers) as session:
             # ==========================================
-            # 🖼 IMAGE SEARCH (Google Only - Safe OFF)
+            # 🖼 IMAGE SEARCH (YANDEX - UNCENSORED)
             # ==========================================
             if media_type == 'image':
                 found_link = None
                 try:
-                    # safe=off ensures NSFW content is included if found
-                    search_url = f"https://www.google.com/search?q={quote(query)}&tbm=isch&safe=off"
-                    
-                    async with session.get(search_url, timeout=10) as resp:
+                    # Yandex is the best for unfiltered image search
+                    search_url = f"https://yandex.com/images/search?text={quote(query)}"
+                    async with session.get(search_url, timeout=15) as resp:
                         if resp.status == 200:
                             html = await resp.text()
+                            # Extract image URLs from Yandex's JSON data in HTML
+                            # Looking for "img_href":"http..."
+                            matches = re.findall(r'"img_href":"(https?://[^"]+?)"', html)
                             
-                            # Regular expression to find image URLs in Google's raw HTML/JSON
-                            # This captures "http...jpg/png" inside JSON structures which Google uses for high-res images
-                            matches = re.findall(r'(https?://[^"]+?\.(?:jpg|jpeg|png))', html)
-                            
-                            for link in matches:
-                                # Filter out thumbnails (gstatic) and favicons to get the real content
-                                if 'gstatic.com' not in link and 'favicon' not in link and 'google.com' not in link:
-                                    found_link = link
-                                    break
+                            if matches:
+                                # Pick a random one from top 5 for variety
+                                found_link = random.choice(matches[:5])
+                                # Yandex escapes slashes, fix them
+                                found_link = found_link.replace('\\/', '/')
                 except Exception as e:
-                    logging.error(f"Google Img Error: {e}")
+                    logging.error(f"Yandex Error: {e}")
                 
-                # Download
+                # Fallback to direct download if link found
                 if found_link:
                     try:
                         async with session.get(found_link, timeout=20) as img_resp:
                             if img_resp.status == 200:
-                                found_extension = found_link.split('.')[-1].split('?')[0]
-                                if len(found_extension) > 4 or len(found_extension) < 2: found_extension = "jpg"
-                                filename = f"download_{int(time.time())}.{found_extension}"
+                                ext = found_link.split('.')[-1].split('?')[0]
+                                if len(ext) > 4: ext = "jpg"
+                                filename = f"download_{int(time.time())}.{ext}"
                                 with open(filename, 'wb') as f:
                                     f.write(await img_resp.read())
                                 found_file_path = filename
-                    except Exception as e:
-                        logging.error(f"Img DL error: {e}")
+                    except: pass
 
             # ==========================================
-            # 🎥 VIDEO SEARCH (Pornhub ONLY)
+            # 🎥 VIDEO SEARCH (PORNHUB SCRAPER)
             # ==========================================
             else:
+                video_page_url = None
                 target_dl_url = None
                 
-                if not PH_INSTALLED:
-                    await status_msg.edit_text("❌ کتابخانه Pornhub API نصب نشده است.")
-                    return
-
+                # Step 1: Search on Pornhub website directly
                 try:
-                    # 1. Search via API
-                    async with AioHttpBackend() as backend:
-                        api = PornhubApi(backend=backend)
-                        results = await api.search.search_videos(q=query, ordering="mostviewed")
-                        
-                        if results:
-                            # 2. Get the first video page URL
-                            for vid in results:
-                                page_link = f"https://www.pornhub.com/view_video.php?viewkey={vid.video_id}"
-                                await status_msg.edit_text(f"🔞 ویدیو یافت شد: {vid.title}\nدر حال استخراج لینک دانلود...")
-                                
-                                # 3. Scrape the page to find the actual MP4 file
-                                # Pornhub stores media definitions in JS variables
-                                async with session.get(page_link, timeout=15) as page_resp:
-                                    if page_resp.status == 200:
-                                        page_html = await page_resp.text()
-                                        
-                                        # Look for mediaDefinitions or direct mp4 links
-                                        # Regex to find 'videoUrl":"https://..."'
-                                        urls = re.findall(r'"videoUrl":"(https?://[^"]+)"', page_html)
-                                        
-                                        # Iterate to find a valid one (cleaning escapes)
-                                        for u in urls:
-                                            clean_url = u.replace('\\/', '/')
-                                            if '.mp4' in clean_url and 'master.m3u8' not in clean_url:
-                                                target_dl_url = clean_url
-                                                break # Found valid MP4
-                                        
-                                        # Fallback regex if variable names changed
-                                        if not target_dl_url:
-                                            direct_mp4s = re.findall(r'(https?://[^"\'\s]+\.mp4(?:\?[^"\'\s]*)?)', page_html)
-                                            if direct_mp4s:
-                                                target_dl_url = direct_mp4s[0]
-                                                
-                                break # Stop after processing first result
+                    search_url = f"https://www.pornhub.com/video/search?search={quote(query)}"
+                    async with session.get(search_url, timeout=15) as s_resp:
+                        if s_resp.status == 200:
+                            html = await s_resp.text()
+                            # Find view_video.php links
+                            # Regex looks for <a href="/view_video.php?viewkey=...">
+                            matches = re.findall(r'href="(/view_video\.php\?viewkey=[a-zA-Z0-9]+)"', html)
+                            if matches:
+                                video_page_url = "https://www.pornhub.com" + matches[0]
+                                await status_msg.edit_text(f"🔞 ویدیو پیدا شد. در حال پردازش لینک...")
                 except Exception as e:
-                    logging.error(f"PH Search/Scrape Err: {e}")
+                    logging.error(f"PH Search Error: {e}")
 
-                # 4. Download Logic
-                if target_dl_url:
-                    await status_msg.edit_text(f"⬇️ شروع دانلود از Pornhub...")
-                    
-                    filename = f"download_{int(time.time())}.mp4"
-                    
+                # Step 2: Extract MP4 from Video Page
+                if video_page_url:
                     try:
-                        # Use custom headers to mimic browser
-                        dl_headers = headers.copy()
-                        dl_headers['Referer'] = 'https://www.pornhub.com/'
-                        
-                        async with session.get(target_dl_url, headers=dl_headers, timeout=1200) as dl_resp: # 20 min timeout
+                        async with session.get(video_page_url, timeout=15) as v_resp:
+                            if v_resp.status == 200:
+                                v_html = await v_resp.text()
+                                
+                                # Method A: Look for direct mp4 in mediaDefinitions (JSON)
+                                # This regex looks for "videoUrl":"https://...mp4..."
+                                urls = re.findall(r'"videoUrl":"(https?://[^"]+)"', v_html)
+                                for u in urls:
+                                    u_clean = u.replace('\\/', '/')
+                                    if '.mp4' in u_clean:
+                                        target_dl_url = u_clean
+                                        break
+                                
+                                # Method B: Fallback Regex for any mp4
+                                if not target_dl_url:
+                                    mp4s = re.findall(r'(https?://[^"\'\s]+\.mp4(?:\?[^"\'\s]*)?)', v_html)
+                                    if mp4s: target_dl_url = mp4s[0]
+
+                    except Exception as e:
+                        logging.error(f"PH Extract Error: {e}")
+
+                # Step 3: Download
+                if target_dl_url:
+                    await status_msg.edit_text(f"⬇️ شروع دانلود (بدون محدودیت)...")
+                    filename = f"download_{int(time.time())}.mp4"
+                    try:
+                        async with session.get(target_dl_url, timeout=1800) as dl_resp: # 30 min timeout
                             if dl_resp.status == 200:
                                 with open(filename, 'wb') as f:
+                                    # Stream to disk
                                     async for chunk in dl_resp.content.iter_chunked(1024 * 1024):
                                         f.write(chunk)
                                 
                                 if os.path.exists(filename) and os.path.getsize(filename) > 1024:
                                     found_file_path = filename
-                                    found_extension = "mp4"
                     except Exception as e:
-                        logging.error(f"PH Download Fail: {e}")
+                        logging.error(f"PH Download Error: {e}")
                         if os.path.exists(filename): os.remove(filename)
 
         # ==========================================
@@ -427,10 +408,10 @@ async def search_and_download_media(client, message, query, media_type='video'):
                 if os.path.exists(found_file_path): os.remove(found_file_path)
                 await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ نتیجه‌ای یافت نشد.")
+            await status_msg.edit_text("❌ نتیجه‌ای یافت نشد. (مطمئن شوید موضوع دقیق است)")
 
     except Exception as e:
-        logging.error(f"Search Handler Error: {e}")
+        logging.error(f"Global Handler Error: {e}")
         try: await status_msg.edit_text(f"❌ خطا: {e}")
         except: pass
 

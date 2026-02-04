@@ -19,7 +19,7 @@ from pyrogram.raw import functions
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
     PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, UserDeactivated, AuthKeyUnregistered,
-    ReactionInvalid, MessageIdInvalid, ChatSendInlineForbidden
+    ReactionInvalid, MessageIdInvalid, ChatSendInlineForbidden, SessionRevoked
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -68,9 +68,11 @@ FIXED_SESSION_STRING = ""
 # --- Cloudflare Workers AI Configuration ---
 CLOUDFLARE_ACCOUNT_ID = "ce2e4697a5504848b6f18b15dda6eee9"
 CLOUDFLARE_API_TOKEN = "oG_r_b0Y-7exOWXcrg9MlLa1fPW9fkepcGU-DfhW"
-CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
+CLOUDFLARE_AI_TEXT_MODEL = "@cf/meta/llama-3.1-70b-instruct"
+# CLOUDFLARE_AI_IMAGE_MODEL = "@cf/stabilityai/stable-diffusion-xl-base-1.0" # غیرفعال شد چون کاربر دانلود از گوگل می‌خواهد
 
 # --- Database Setup (MongoDB) ---
+# ⚠️ توجه: مقدار <db_password> را با رمز عبور واقعی دیتابیس خود جایگزین کنید
 MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
@@ -87,7 +89,7 @@ if MONGO_URI and "<db_password>" not in MONGO_URI:
         mongo_client = None
         sessions_collection = None
 else:
-    logging.warning("MONGO_URI is not configured correctly.")
+    logging.warning("MONGO_URI is not configured correctly (contains placeholder or empty).")
 
 # --- Application Variables ---
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
@@ -137,8 +139,8 @@ HELP_TEXT = """
   » `ریاکشن [شکلک]` | `خاموش` (ریپلای روی کاربر)
 
 **✦ سرگرمی و مدیا**
-  » `دانلود [موضوع]` (جستجو در وب و دانلود خودکار)
-  » `عکس [موضوع]` (جستجو و ارسال عکس)
+  » `دانلود [موضوع]` (جستجو در کل اینترنت و دانلود)
+  » `عکس [موضوع]` (جستجو و دانلود عکس واقعی از گوگل)
   » `تاس` | `تاس [عدد]`
   » `بولینگ`
 
@@ -282,7 +284,7 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
         if any(k in msg_l for k in insult_keywords):
             return "با احترام حرف بزن."
 
-        url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_AI_MODEL}"
+        url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_AI_TEXT_MODEL}"
         headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}", "Content-Type": "application/json"}
         
         if user_id not in AI_CONVERSATION_HISTORY: AI_CONVERSATION_HISTORY[user_id] = {}
@@ -310,47 +312,18 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
         return "بعدا پیام بده."
     except: return "بعدا پیام بده."
 
-async def search_and_send_image_logic(client, chat_id, query):
-    """Robust Image Search: Downloads to RAM then sends as file"""
-    status_msg = None
-    try:
-        await client.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
-        status_msg = await client.send_message(chat_id, f"🖼 دریافت تصویر: **{query}**...")
-        
-        # Use headers to mimic a browser to avoid 403 Forbidden
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        image_url = f"https://image.pollinations.ai/prompt/{quote(query)}?width=1024&height=1024&nologo=true"
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, headers=headers, timeout=30) as response:
-                if response.status == 200:
-                    data = await response.read()
-                    if data:
-                        # 1. Store in RAM
-                        file_obj = io.BytesIO(data)
-                        file_obj.name = f"{query.replace(' ', '_')}.jpg"
-                        
-                        # 2. Upload raw bytes to Telegram
-                        await client.send_photo(chat_id, file_obj, caption=f"🖼 تصویر: **{query}**")
-                        if status_msg: await status_msg.delete()
-                    else:
-                        if status_msg: await status_msg.edit_text("❌ داده عکس خالی بود.")
-                else:
-                    if status_msg: await status_msg.edit_text(f"❌ خطا در سرور عکس: {response.status}")
-    except Exception as e:
-        logging.error(f"Image Error: {e}")
-        try: 
-            if status_msg: await status_msg.edit_text(f"⚠️ خطا: {str(e)}")
-            else: await client.send_message(chat_id, f"⚠️ خطا در دریافت عکس.")
-        except: pass
-
-async def get_web_video_url(query):
-    """Scrapes DuckDuckGo HTML for video links"""
+# --- Web Scraping Helpers (Universal) ---
+async def get_web_candidates(query, type="video"):
+    """
+    Scrapes DuckDuckGo HTML to find potential links.
+    Returns a LIST of candidates to try.
+    """
+    candidates = []
     try:
         search_url = "https://html.duckduckgo.com/html/"
-        data = {'q': query + " video"}
+        # For images, we just search query. For videos, we append "video"
+        search_term = query + (" video" if type == "video" else "")
+        data = {'q': search_term}
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Referer': 'https://html.duckduckgo.com/'
@@ -359,90 +332,153 @@ async def get_web_video_url(query):
             async with session.post(search_url, data=data, headers=headers) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    # Find links
-                    links = re.findall(r'class="result__a" href="([^"]+)"', html)
-                    video_domains = ['youtube.com', 'youtu.be', 'instagram.com', 'tiktok.com', 'twitter.com', 'x.com', 'facebook.com']
                     
-                    for link in links:
-                        d_link = unquote(link)
-                        # Clean DDG redirect
-                        if "uddg=" in d_link: 
-                            try:
-                                d_link = unquote(d_link.split("uddg=")[1].split("&")[0])
-                            except: pass
-                        
-                        if any(dom in d_link for dom in video_domains): 
-                            return d_link
+                    if type == "image":
+                        # Find image thumbnails (proxied by DDG)
+                        # They look like: <img src="//external-content.duckduckgo.com/iu/?u=..." ...>
+                        # We extract the 'u' parameter if present, or use the link as is.
+                        raw_imgs = re.findall(r'<img[^>]+src="([^"]+)"', html)
+                        for img in raw_imgs:
+                            if "external-content" in img or "proxy" in img:
+                                # Try to decode 'u' param for high res
+                                if "u=" in img:
+                                    try:
+                                        decoded = unquote(img.split("u=")[1].split("&")[0])
+                                        candidates.append(decoded)
+                                    except:
+                                        candidates.append("https:" + img if img.startswith("//") else img)
+                                else:
+                                    candidates.append("https:" + img if img.startswith("//") else img)
+                    else:
+                        # Find web links for videos
+                        # We accept ANY link, not just specific domains, to support "porn or education"
+                        links = re.findall(r'class="result__a" href="([^"]+)"', html)
+                        for link in links:
+                            d_link = unquote(link)
+                            if "uddg=" in d_link:
+                                try:
+                                    d_link = unquote(d_link.split("uddg=")[1].split("&")[0])
+                                except: pass
+                            # Filter out internal DDG links
+                            if "duckduckgo.com" not in d_link:
+                                candidates.append(d_link)
     except Exception as e:
         logging.error(f"Search Error: {e}")
-    return None
+    
+    # Remove duplicates and return unique list
+    return list(dict.fromkeys(candidates))
+
+async def search_and_send_image_logic(client, chat_id, query):
+    """Downloads Image from Web (Google/DDG) instead of Generating"""
+    status_msg = None
+    try:
+        await client.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
+        status_msg = await client.send_message(chat_id, f"🖼 جستجو و دانلود عکس: **{query}**...")
+        
+        # 1. Get Candidates
+        candidates = await get_web_candidates(query, type="image")
+        
+        if not candidates:
+            await status_msg.edit_text("❌ عکسی در نتایج جستجو یافت نشد.")
+            return
+
+        # 2. Try candidates
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        success = False
+        async with aiohttp.ClientSession() as session:
+            for img_url in candidates[:5]: # Try top 5 results
+                try:
+                    async with session.get(img_url, headers=headers, timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.read()
+                            if len(data) > 1000: # Ensure not a tiny error icon
+                                file_obj = io.BytesIO(data)
+                                file_obj.name = "image.jpg"
+                                await client.send_photo(chat_id, file_obj, caption=f"🖼 نتیجه وب: **{query}**")
+                                success = True
+                                break
+                except:
+                    continue
+        
+        if success:
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ نتوانستم عکس‌های یافت شده را دانلود کنم.")
+
+    except Exception as e:
+        logging.error(f"Image Web Error: {e}")
+        try: await status_msg.edit_text(f"⚠️ خطا: {str(e)}")
+        except: pass
 
 async def download_web_video_logic(client, chat_id, query):
-    """Robust Video Download: Downloads to RAM then sends"""
+    """Robust Video Download: Tries multiple results from search"""
     status_msg = None
     try:
         await client.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
-        status_msg = await client.send_message(chat_id, f"🌍 جستجو و دانلود: **{query}**...")
+        status_msg = await client.send_message(chat_id, f"🌍 جستجوی ویدیو: **{query}**...")
         
-        # 1. Find Link
-        video_link = await get_web_video_url(query)
-        if not video_link:
-             await status_msg.edit_text("❌ لینک مناسبی در نتایج وب پیدا نشد.")
+        # 1. Find Links (Any domain)
+        video_candidates = await get_web_candidates(query, type="video")
+        
+        if not video_candidates:
+             await status_msg.edit_text("❌ هیچ لینکی در نتایج وب پیدا نشد.")
              return
         
-        await status_msg.edit_text(f"🔗 لینک: `{video_link}`\n⬇️ در حال پردازش و دانلود...")
+        await status_msg.edit_text(f"🔎 {len(video_candidates)} نتیجه یافت شد. در حال پردازش لینک‌ها...")
         
-        # 2. Cobalt API Request
-        cobalt_api = "https://api.cobalt.tools/api/json"
+        # Cobalt Mirrors
+        cobalt_mirrors = [
+            "https://api.cobalt.tools/api/json",
+            "https://co.wuk.sh/api/json",
+            "https://cobalt.xy24.eu/api/json"
+        ]
+        
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0"
         }
-        # Request lower quality to ensure file size is small and download works
-        payload = {
-            "url": video_link,
-            "videoQuality": "480",
-            "filenamePattern": "basic"
-        }
+        download_headers = {"User-Agent": "Mozilla/5.0"}
+
+        success = False
         
         async with aiohttp.ClientSession() as session:
-            async with session.post(cobalt_api, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    await status_msg.edit_text("❌ خطا در API دانلودر (Cobalt).")
-                    return
+            # Try up to 3 different search results
+            for link in video_candidates[:3]:
+                if success: break
                 
-                data = await resp.json()
+                # For each link, try Cobalt mirrors
+                for api_url in cobalt_mirrors:
+                    try:
+                        payload = {"url": link, "videoQuality": "480"}
+                        async with session.post(api_url, json=payload, headers=headers, timeout=8) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                if 'url' in data:
+                                    # Found a download link!
+                                    d_url = data['url']
+                                    
+                                    # Download to RAM
+                                    async with session.get(d_url, headers=download_headers) as v_resp:
+                                        if v_resp.status == 200:
+                                            v_bytes = await v_resp.read()
+                                            if 1000 < len(v_bytes) < 50 * 1024 * 1024:
+                                                f_obj = io.BytesIO(v_bytes)
+                                                f_obj.name = "video.mp4"
+                                                await client.send_video(chat_id, f_obj, caption=f"🎥 **{query}**\n🔗 {link}")
+                                                success = True
+                                                break
+                    except: continue
                 
-                if 'url' not in data:
-                     # Check for specific error message
-                     err = data.get('text', 'Unknown Error')
-                     await status_msg.edit_text(f"❌ دانلودر خطا داد: {err}")
-                     return
-                
-                download_url = data['url']
-                
-                # 3. Download File to RAM
-                async with session.get(download_url) as v_resp:
-                    if v_resp.status == 200:
-                        v_bytes = await v_resp.read()
-                        
-                        if len(v_bytes) > 50 * 1024 * 1024:
-                            await status_msg.edit_text("⚠️ حجم فایل بیشتر از ۵۰ مگابایت است.")
-                            return
-                        
-                        if len(v_bytes) < 1000: # Too small, probably an error page
-                             await status_msg.edit_text("❌ فایل دانلود شده نامعتبر است.")
-                             return
-
-                        f_obj = io.BytesIO(v_bytes)
-                        f_obj.name = "video.mp4"
-                        
-                        # 4. Upload to Telegram
-                        await client.send_video(chat_id, f_obj, caption=f"🎥 **{query}**\n🔗 {video_link}")
-                        await status_msg.delete()
-                    else:
-                        await status_msg.edit_text("❌ خطا در دانلود فایل نهایی.")
+                if success: break
+        
+        if success:
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ نتوانستم ویدیوی قابل دانلود (زیر ۵۰ مگ) از نتایج اول پیدا کنم.")
 
     except Exception as e:
         logging.error(f"Download Task Error: {e}")
@@ -453,7 +489,6 @@ async def download_web_video_logic(client, chat_id, query):
 async def update_profile_clock(client: Client, user_id: int):
     while user_id in ACTIVE_BOTS:
         try:
-            # Check DB/Memory state
             if CLOCK_STATUS.get(user_id, True) and not COPY_MODE_STATUS.get(user_id, False):
                 await perform_clock_update_now(client, user_id)
             now = datetime.now(TEHRAN_TIMEZONE)
@@ -506,7 +541,6 @@ async def outgoing_message_modifier(client, message):
     original_text = message.text
     modified_text = original_text
     
-    # Check Memory (loaded from DB)
     target_lang = AUTO_TRANSLATE_TARGET.get(user_id)
     if target_lang: modified_text = await translate_text(modified_text, target_lang)
     
@@ -549,6 +583,9 @@ async def secretary_auto_reply_handler(client, message):
                 except: pass
 
 async def media_command_handler(client, message):
+    # Fix: Check if message.text exists (it could be None for media messages)
+    if not message.text: return
+    
     cmd = message.text.strip()
     if cmd.startswith("دانلود "):
         query = cmd[7:].strip()
@@ -598,7 +635,10 @@ async def photo_setting_controller(client, message):
 
 async def reply_based_controller(client, message):
     user_id = client.me.id
+    # Fix: Ensure message.text is not None before processing
     cmd = message.text
+    if not cmd: return 
+
     if cmd == "تاس": await client.send_dice(message.chat.id, "🎲")
     elif cmd == "بولینگ": await client.send_dice(message.chat.id, "🎳")
     elif cmd.startswith("تاس "): 
@@ -631,8 +671,7 @@ async def reply_based_controller(client, message):
                 me = await client.get_me()
                 ORIGINAL_PROFILE_DATA[user_id] = {'first_name': me.first_name, 'bio': me.bio}
                 COPY_MODE_STATUS[user_id] = True
-                CLOCK_STATUS[user_id] = False # Force clock off when copy is on
-                # Note: Not saving COPY MODE to DB to prevent getting stuck in copy mode on restart, but could if needed.
+                CLOCK_STATUS[user_id] = False 
                 target_photos = [p async for p in client.get_chat_photos(target_id, limit=1)]
                 await client.update_profile(first_name=user.first_name, bio=(user.bio or "")[:70])
                 if target_photos: await client.set_profile_photo(photo=target_photos[0].file_id)
@@ -666,29 +705,29 @@ async def reply_based_controller(client, message):
                 await message.edit_text("❌ واکنش حذف شد.")
 
 async def start_bot_instance(session_string: str, phone: str = None):
-    # Determine name for logging
     name_log = phone if phone else "FixedSession"
     client = Client(f"bot_{name_log}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
     try:
         await client.start()
         user_id = (await client.get_me()).id
         
-        # 1. Update Mapping if phone provided
         if phone and sessions_collection is not None:
             sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
         
-        # 2. LOAD SETTINGS FROM DB (This restores font, clock, bold, etc.)
         load_user_settings(user_id)
         
+    except (SessionRevoked, AuthKeyUnregistered) as e:
+        logging.error(f"❌ Session REVOKED for {name_log}. Removing from DB to prevent loops.")
+        if phone and sessions_collection is not None:
+            sessions_collection.delete_one({'phone_number': phone})
+        return
     except Exception as e:
         logging.error(f"Failed to start client {name_log}: {e}")
         return
 
-    # Clear old tasks if any
     if user_id in ACTIVE_BOTS:
         for t in ACTIVE_BOTS[user_id][1]: t.cancel()
     
-    # Handlers
     client.add_handler(MessageHandler(lambda c, m: m.delete() if PV_LOCK_STATUS.get(c.me.id) else None, filters.private & ~filters.me & ~filters.bot), group=-5)
     client.add_handler(MessageHandler(lambda c, m: c.read_chat_history(m.chat.id) if AUTO_SEEN_STATUS.get(c.me.id) else None, filters.private & ~filters.me), group=-4)
     client.add_handler(MessageHandler(incoming_message_manager, filters.all & ~filters.me), group=-3)
@@ -753,7 +792,6 @@ async def callback_panel_handler(client, callback):
     if callback.from_user.id != target_user_id:
         await callback.answer("⛔️ دسترسی غیرمجاز!", show_alert=True); return
 
-    # USE save_user_setting to persist changes immediately
     if action == "toggle_clock":
         new_val = not CLOCK_STATUS.get(target_user_id, True)
         save_user_setting(target_user_id, 'clock', new_val)
@@ -772,7 +810,6 @@ async def callback_panel_handler(client, callback):
         idx = (FONT_KEYS_ORDER.index(cur) + 1) % len(FONT_KEYS_ORDER)
         new_font = FONT_KEYS_ORDER[idx]
         save_user_setting(target_user_id, 'font', new_font)
-        # Force clock update to apply font immediately
         if target_user_id in ACTIVE_BOTS and CLOCK_STATUS.get(target_user_id, True):
             asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[target_user_id][0], target_user_id))
 
@@ -823,7 +860,6 @@ async def inline_panel_handler(client, query):
     user_id = query.from_user.id
     if query.query == "panel":
         photo_id = get_panel_photo(user_id)
-        # Load settings fresh to ensure UI is accurate
         load_user_settings(user_id) 
         
         if photo_id:
@@ -880,7 +916,6 @@ async def text_handler(client, message):
 async def finalize(message, user_c, phone):
     s_str = await user_c.export_session_string(); me = await user_c.get_me(); await user_c.disconnect()
     if sessions_collection is not None:
-        # Save session AND default settings if not exists
         sessions_collection.update_one(
             {'phone_number': phone}, 
             {'$set': {'session_string': s_str, 'user_id': me.id}, '$setOnInsert': {'settings': {}}}, 
@@ -896,18 +931,14 @@ def home(): return "Bot is running..."
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
     
-    # 1. FIXED SESSION PRIORITY
     if FIXED_SESSION_STRING:
         logging.info("🚀 Starting FIXED SESSION...")
         asyncio.create_task(start_bot_instance(FIXED_SESSION_STRING))
 
-    # 2. RESTORE DB SESSIONS
     if sessions_collection is not None:
         count = 0
         for doc in sessions_collection.find():
             if 'session_string' in doc and 'phone_number' in doc:
-                # If fixed session is already running this user, skip?
-                # For simplicity, we just run all valid sessions found
                 asyncio.create_task(start_bot_instance(doc['session_string'], doc['phone_number']))
                 count += 1
         logging.info(f"🚀 Restoring {count} sessions from Database...")

@@ -12,3 +12,4 @@ APScheduler==3.11.0
 aiofiles
 numpy
 matplotlib
+pornhub-api

@@ -60,7 +60,7 @@ API_ID = 28190856
 API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 
 # 🔴🔴🔴 توکن ربات منیجر 🔴🔴🔴
-BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
+BOT_TOKEN = "8410750918:AAFh-7fqjBHfjbXHAUy_v85MZbjq5HmBTGE" 
 
 # 🔴🔴🔴 سشن استرینگ ثابت (برای جلوگیری از لاگین مجدد) 🔴🔴🔴
 FIXED_SESSION_STRING = ""

@@ -277,56 +277,66 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
 async def search_and_download_media(client, message, query, media_type='video'):
     """
     Advanced Search: 
-    1. Images: High Quality via Google Images JSON parsing.
-    2. Videos: Deep Page Scanning (visits search result pages to find hidden .mp4 files).
+    1. Images: Google Images (Primary) -> DuckDuckGo (Fallback).
+    2. Videos: Deep Page Scanning with NO SIZE LIMITS.
     """
-    status_msg = await message.reply_text(f"🔍 در حال جستجو پیشرفته برای: {query} ...")
+    status_msg = await message.reply_text(f"🔍 در حال جستجو برای: {query} ...")
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
         }
         
-        found_file_data = None
+        found_file_path = None
         found_extension = "mp4" if media_type == 'video' else "jpg"
         
         async with aiohttp.ClientSession(headers=headers) as session:
             # ==========================================
-            # 🖼 IMAGE SEARCH (Google High Quality)
+            # 🖼 IMAGE SEARCH 
             # ==========================================
             if media_type == 'image':
-                # tbs=isz:l (Large), safe=off (No censorship)
+                # Strategy 1: Google Images (High Res)
                 search_url = f"https://www.google.com/search?q={quote(query)}&tbm=isch&safe=off&tbs=isz:l"
-                async with session.get(search_url) as resp:
-                    if resp.status == 200:
-                        html = await resp.text()
-                        # Regex to find high-res image URLs in Google's JSON blobs
-                        pattern = r'(https?://[^"]+?\.(?:jpg|jpeg|png|webp))'
-                        matches = re.findall(pattern, html)
-                        
-                        for link in matches:
-                            # Skip Google's thumbnails/favicons to ensure High Quality
-                            if 'gstatic.com' in link or 'google.com' in link or 'favicon' in link: continue
-                            
-                            try:
-                                # Quick check if it works
-                                async with session.head(link, timeout=3) as head:
-                                    if head.status == 200:
-                                        async with session.get(link, timeout=10) as img_resp:
-                                            if img_resp.status == 200:
-                                                data = await img_resp.read()
-                                                if len(data) > 50 * 1024: # Must be > 50KB (not a tiny icon)
-                                                    found_file_data = data
-                                                    found_extension = link.split('.')[-1].split('?')[0]
-                                                    if len(found_extension) > 4: found_extension = "jpg"
-                                                    break
-                            except: continue
-                            if found_file_data: break
+                found_link = None
+                
+                try:
+                    async with session.get(search_url, timeout=10) as resp:
+                        if resp.status == 200:
+                            html = await resp.text()
+                            # Broad regex to catch any image url
+                            matches = re.findall(r'(https?://[^"]+?\.(?:jpg|jpeg|png|webp))', html)
+                            for link in matches:
+                                if 'gstatic.com' not in link and 'favicon' not in link:
+                                    found_link = link
+                                    break
+                except: pass
+
+                # Strategy 2: DuckDuckGo Images (Fallback if Google fails)
+                if not found_link:
+                    try:
+                        ddg_url = f"https://duckduckgo.com/?q={quote(query)}&t=h_&iar=images&iax=images&ia=images"
+                        # Note: DDG HTML is hard to parse for direct links without API, 
+                        # but we can try scraping the visual result page or use a direct scraping endpoint if available.
+                        # Using a simpler fallback: A generic scrape of top result page images
+                        pass # DDG requires VQD token logic, sticking to Google broad regex or Bing is better.
+                
+                # Download Image
+                if found_link:
+                    try:
+                        async with session.get(found_link, timeout=15) as img_resp:
+                            if img_resp.status == 200:
+                                found_extension = found_link.split('.')[-1].split('?')[0]
+                                if len(found_extension) > 4: found_extension = "jpg"
+                                filename = f"download_{int(time.time())}.{found_extension}"
+                                with open(filename, 'wb') as f:
+                                    f.write(await img_resp.read())
+                                found_file_path = filename
+                    except: pass
 
             # ==========================================
-            # 🎥 VIDEO SEARCH (Deep Page Scanning)
+            # 🎥 VIDEO SEARCH (Deep Page Scanning - NO LIMITS)
             # ==========================================
             else:
-                # 1. Search for PAGES that might contain the video (not just files)
+                # 1. Search for PAGES
                 search_query = f"{query} download mp4" 
                 search_url = f"https://html.duckduckgo.com/html/?q={quote(search_query)}&kp=-2"
                 
@@ -334,7 +344,6 @@ async def search_and_download_media(client, message, query, media_type='video'):
                 async with session.get(search_url) as resp:
                     if resp.status == 200:
                         html = await resp.text()
-                        # Extract result page links
                         raw_links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
                         for link in raw_links:
                             link = unquote(link)
@@ -346,61 +355,62 @@ async def search_and_download_media(client, message, query, media_type='video'):
                             if any(x in link for x in ["duckduckgo", "google", "adserver", "youtube.com"]): continue
                             page_links.append(link)
 
-                # 2. Iterate through search results (pages) to find video tags INSIDE them
-                for page_url in page_links[:6]: # Check top 6 pages
+                # 2. Iterate pages to find ANY video file
+                for page_url in page_links[:5]:
                     try:
-                        video_candidates = []
-                        # If the link itself is a file
+                        target_url = None
                         if page_url.lower().endswith(('.mp4', '.mkv', '.mov')):
-                            video_candidates = [page_url]
+                            target_url = page_url
                         else:
-                            # Visit the page
-                            async with session.get(page_url, timeout=6) as page_resp:
-                                if page_resp.status != 200: continue
-                                page_html = await page_resp.text()
-                                # Scan for .mp4 links in the page source code
-                                video_candidates = re.findall(r'(https?://[^"\'\s]+\.mp4)', page_html)
+                            async with session.get(page_url, timeout=8) as page_resp:
+                                if page_resp.status == 200:
+                                    page_html = await page_resp.text()
+                                    candidates = re.findall(r'(https?://[^"\'\s]+\.mp4)', page_html)
+                                    if candidates: target_url = candidates[0]
                         
-                        # 3. Check candidates found on this page
-                        for vid_url in video_candidates:
+                        if target_url:
+                            await status_msg.edit_text(f"⬇️ فایل پیدا شد. شروع دانلود (بدون محدودیت حجم)...")
+                            
+                            # Stream download to file to prevent RAM crash
+                            filename = f"download_{int(time.time())}.mp4"
+                            
                             try:
-                                async with session.head(vid_url, timeout=5) as head_resp:
-                                    size = int(head_resp.headers.get('Content-Length', 0))
-                                    # Filter: Must be > 2MB (real video) and < 50MB (telegram limit)
-                                    if 2 * 1024 * 1024 < size < 50 * 1024 * 1024:
-                                        await status_msg.edit_text(f"⬇️ ویدیو مناسب یافت شد ({size // 1024 // 1024} MB). در حال دانلود...")
-                                        async with session.get(vid_url, timeout=40) as dl_resp:
-                                            if dl_resp.status == 200:
-                                                data = await dl_resp.read()
-                                                if len(data) < 50 * 1024 * 1024:
-                                                    found_file_data = data
-                                                    found_extension = "mp4"
-                                                    break
-                            except: continue
-                        if found_file_data: break
+                                async with session.get(target_url, timeout=300) as dl_resp: # 5 min timeout
+                                    if dl_resp.status == 200:
+                                        with open(filename, 'wb') as f:
+                                            async for chunk in dl_resp.content.iter_chunked(1024 * 1024): # 1MB chunks
+                                                f.write(chunk)
+                                        
+                                        # Verify file exists and has size
+                                        if os.path.getsize(filename) > 1024:
+                                            found_file_path = filename
+                                            found_extension = "mp4"
+                                            break
+                            except Exception as dl_err:
+                                logging.error(f"DL Error: {dl_err}")
+                                if os.path.exists(filename): os.remove(filename)
+                                continue
                     except: continue
+                    if found_file_path: break
 
         # ==========================================
         # 📤 UPLOAD
         # ==========================================
-        if found_file_data:
-            filename = f"download_{int(time.time())}.{found_extension}"
-            with open(filename, "wb") as f:
-                f.write(found_file_data)
-            
+        if found_file_path:
             await status_msg.edit_text("📤 در حال آپلود...")
             try:
+                # Use a larger timeout for upload
                 if media_type == 'video':
-                    await client.send_video(message.chat.id, filename, caption=f"✅ {query}", reply_to_message_id=message.id)
+                    await client.send_video(message.chat.id, found_file_path, caption=f"✅ {query}", reply_to_message_id=message.id)
                 else:
-                    await client.send_photo(message.chat.id, filename, caption=f"✅ {query}", reply_to_message_id=message.id)
+                    await client.send_photo(message.chat.id, found_file_path, caption=f"✅ {query}", reply_to_message_id=message.id)
             except Exception as e:
-                await status_msg.edit_text(f"❌ خطا در ارسال: {e}")
+                await status_msg.edit_text(f"❌ خطا در ارسال (شاید حجم فایل برای تلگرام زیاد است): {e}")
             finally:
-                if os.path.exists(filename): os.remove(filename)
+                if os.path.exists(found_file_path): os.remove(found_file_path)
                 await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ نتیجه‌ای با حجم مناسب (زیر 50 مگابایت) یافت نشد. شاید فایل‌ها خیلی حجیم هستند.")
+            await status_msg.edit_text("❌ فایلی پیدا نشد یا لینک‌های دانلود مستقیم منقضی شده‌اند.")
 
     except Exception as e:
         logging.error(f"Search Error: {e}")

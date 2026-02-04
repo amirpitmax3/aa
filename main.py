@@ -276,141 +276,135 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
 # --- Google Search & Download Helper ---
 async def search_and_download_media(client, message, query, media_type='video'):
     """
-    Search Google/Web for media, find direct link, download and send.
-    media_type: 'video' or 'image'
+    Advanced Search: 
+    1. Images: High Quality via Google Images JSON parsing.
+    2. Videos: Deep Page Scanning (visits search result pages to find hidden .mp4 files).
     """
-    status_msg = await message.reply_text(f"🔍 در حال جستجو برای: {query} ...")
+    status_msg = await message.reply_text(f"🔍 در حال جستجو پیشرفته برای: {query} ...")
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        found_url = None
+        found_file_data = None
+        found_extension = "mp4" if media_type == 'video' else "jpg"
         
         async with aiohttp.ClientSession(headers=headers) as session:
-            # 1. Strategy for Images: Google Images (High Quality & Unfiltered)
+            # ==========================================
+            # 🖼 IMAGE SEARCH (Google High Quality)
+            # ==========================================
             if media_type == 'image':
-                # tbs=isz:l -> Large images
-                # safe=off -> No censorship
+                # tbs=isz:l (Large), safe=off (No censorship)
                 search_url = f"https://www.google.com/search?q={quote(query)}&tbm=isch&safe=off&tbs=isz:l"
                 async with session.get(search_url) as resp:
                     if resp.status == 200:
                         html = await resp.text()
+                        # Regex to find high-res image URLs in Google's JSON blobs
+                        pattern = r'(https?://[^"]+?\.(?:jpg|jpeg|png|webp))'
+                        matches = re.findall(pattern, html)
                         
-                        # Try to find high-resolution URLs in the script data (better than src)
-                        # Looking for typical http links ending in extensions within JSON structures
-                        matches = re.findall(r'(https?://[^"]+?\.(?:jpg|jpeg|png|webp))', html)
-                        
-                        candidates = []
-                        for m in matches:
-                            # Filter out google thumbnails and favicons to get real images
-                            if 'gstatic.com' not in m and 'favicon' not in m and 'google' not in m:
-                                candidates.append(m)
-                        
-                        # Fallback to simple src if deep scraping fails
-                        if not candidates:
-                            candidates = re.findall(r'src="(https?://[^"]+)"', html)
+                        for link in matches:
+                            # Skip Google's thumbnails/favicons to ensure High Quality
+                            if 'gstatic.com' in link or 'google.com' in link or 'favicon' in link: continue
                             
-                        # Try candidates
-                        for link in candidates:
-                            found_url = link
-                            break # Just take the first valid-looking one
-            
-            # 2. Strategy for Videos: DuckDuckGo (Unfiltered & Direct)
+                            try:
+                                # Quick check if it works
+                                async with session.head(link, timeout=3) as head:
+                                    if head.status == 200:
+                                        async with session.get(link, timeout=10) as img_resp:
+                                            if img_resp.status == 200:
+                                                data = await img_resp.read()
+                                                if len(data) > 50 * 1024: # Must be > 50KB (not a tiny icon)
+                                                    found_file_data = data
+                                                    found_extension = link.split('.')[-1].split('?')[0]
+                                                    if len(found_extension) > 4: found_extension = "jpg"
+                                                    break
+                            except: continue
+                            if found_file_data: break
+
+            # ==========================================
+            # 🎥 VIDEO SEARCH (Deep Page Scanning)
+            # ==========================================
             else:
-                # kp=-2 -> Turn OFF Safe Search (Uncensored)
-                # We search for filetype:mp4 to increase chances of direct links
-                search_query = f"{query} filetype:mp4"
+                # 1. Search for PAGES that might contain the video (not just files)
+                search_query = f"{query} download mp4" 
                 search_url = f"https://html.duckduckgo.com/html/?q={quote(search_query)}&kp=-2"
                 
+                page_links = []
                 async with session.get(search_url) as resp:
                     if resp.status == 200:
                         html = await resp.text()
-                        
-                        # Extract all links
-                        links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
-                        
-                        for link in links:
+                        # Extract result page links
+                        raw_links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
+                        for link in raw_links:
                             link = unquote(link)
-                            
-                            # Handle DuckDuckGo Redirects
                             if "duckduckgo.com/l/?" in link:
                                 try:
-                                    parsed = urlparse(link)
-                                    qs = parse_qs(parsed.query)
+                                    qs = parse_qs(urlparse(link).query)
                                     if 'uddg' in qs: link = qs['uddg'][0]
                                 except: continue
-                            
-                            # Skip search engine links
-                            if any(x in link for x in ["duckduckgo", "google", "yandex", "adserver"]): continue
-                            
-                            # Check if it looks like a video file (relaxed check)
-                            # Now checks if 'mp4' is ANYWHERE in the url path, not just endswith
-                            # This handles urls like example.com/video.mp4?token=123
-                            if '.mp4' in link.lower() or '.mkv' in link.lower() or '.mov' in link.lower():
-                                # Validate size
-                                try:
-                                    async with session.head(link, timeout=5) as head_resp:
-                                        # Verify content type if possible
-                                        ct = head_resp.headers.get('Content-Type', '').lower()
-                                        if 'text/html' in ct: continue # Skip if it's a web page masquerading as mp4
+                            if any(x in link for x in ["duckduckgo", "google", "adserver", "youtube.com"]): continue
+                            page_links.append(link)
 
-                                        content_length = int(head_resp.headers.get('Content-Length', 0))
-                                        
-                                        # If > 50MB, skip and try next
-                                        if content_length > 50 * 1024 * 1024:
-                                            continue
-                                        
-                                        # If unknown size (0) or valid size, assume it's good
-                                        found_url = link
-                                        break
-                                except:
-                                    continue # If head fails, skip
-                
-            if found_url:
-                await status_msg.edit_text("⬇️ فایل مناسب پیدا شد. در حال دانلود ...")
-                
-                # Use a timeout for download
-                try:
-                    async with session.get(found_url, timeout=60) as dl_resp:
-                        if dl_resp.status == 200:
-                            content_length = int(dl_resp.headers.get('Content-Length', 0))
-                            if content_length > 50 * 1024 * 1024:
-                                await status_msg.edit_text("❌ فایل پیدا شده حجم بالایی داشت. لطفاً دقیق‌تر جستجو کنید.")
-                                return
-
-                            file_data = await dl_resp.read()
-                            
-                            if len(file_data) > 50 * 1024 * 1024:
-                                await status_msg.edit_text("❌ حجم فایل دانلود شده بیش از 50 مگابایت است.")
-                                return
-
-                            file_name = f"download_{int(time.time())}.{'mp4' if media_type=='video' else 'jpg'}"
-                            with open(file_name, 'wb') as f:
-                                f.write(file_data)
-                            
-                            await status_msg.edit_text("📤 در حال آپلود ...")
+                # 2. Iterate through search results (pages) to find video tags INSIDE them
+                for page_url in page_links[:6]: # Check top 6 pages
+                    try:
+                        video_candidates = []
+                        # If the link itself is a file
+                        if page_url.lower().endswith(('.mp4', '.mkv', '.mov')):
+                            video_candidates = [page_url]
+                        else:
+                            # Visit the page
+                            async with session.get(page_url, timeout=6) as page_resp:
+                                if page_resp.status != 200: continue
+                                page_html = await page_resp.text()
+                                # Scan for .mp4 links in the page source code
+                                video_candidates = re.findall(r'(https?://[^"\'\s]+\.mp4)', page_html)
+                        
+                        # 3. Check candidates found on this page
+                        for vid_url in video_candidates:
                             try:
-                                if media_type == 'video':
-                                    await client.send_video(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
-                                else:
-                                    await client.send_photo(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
-                            except Exception as upload_err:
-                                await status_msg.edit_text(f"❌ خطا در ارسال فایل: {upload_err}")
-                            finally:
-                                if os.path.exists(file_name): os.remove(file_name)
-                                await status_msg.delete()
-                            return
-                except asyncio.TimeoutError:
-                    await status_msg.edit_text("❌ دانلود فایل زمان‌بر شد (تایم‌اوت). سرور فایل کند است.")
-                    return
+                                async with session.head(vid_url, timeout=5) as head_resp:
+                                    size = int(head_resp.headers.get('Content-Length', 0))
+                                    # Filter: Must be > 2MB (real video) and < 50MB (telegram limit)
+                                    if 2 * 1024 * 1024 < size < 50 * 1024 * 1024:
+                                        await status_msg.edit_text(f"⬇️ ویدیو مناسب یافت شد ({size // 1024 // 1024} MB). در حال دانلود...")
+                                        async with session.get(vid_url, timeout=40) as dl_resp:
+                                            if dl_resp.status == 200:
+                                                data = await dl_resp.read()
+                                                if len(data) < 50 * 1024 * 1024:
+                                                    found_file_data = data
+                                                    found_extension = "mp4"
+                                                    break
+                            except: continue
+                        if found_file_data: break
+                    except: continue
 
-        await status_msg.edit_text(f"❌ فایل مناسبی با حجم زیر 50 مگابایت برای '{query}' پیدا نشد. (برای ویدیو مطمئن شوید فایل MP4 مستقیم در وب موجود است)")
-        
+        # ==========================================
+        # 📤 UPLOAD
+        # ==========================================
+        if found_file_data:
+            filename = f"download_{int(time.time())}.{found_extension}"
+            with open(filename, "wb") as f:
+                f.write(found_file_data)
+            
+            await status_msg.edit_text("📤 در حال آپلود...")
+            try:
+                if media_type == 'video':
+                    await client.send_video(message.chat.id, filename, caption=f"✅ {query}", reply_to_message_id=message.id)
+                else:
+                    await client.send_photo(message.chat.id, filename, caption=f"✅ {query}", reply_to_message_id=message.id)
+            except Exception as e:
+                await status_msg.edit_text(f"❌ خطا در ارسال: {e}")
+            finally:
+                if os.path.exists(filename): os.remove(filename)
+                await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ نتیجه‌ای با حجم مناسب (زیر 50 مگابایت) یافت نشد. شاید فایل‌ها خیلی حجیم هستند.")
+
     except Exception as e:
-        logging.error(f"Search Download Error: {e}")
-        try: await status_msg.edit_text(f"❌ خطا در عملیات: {e}")
+        logging.error(f"Search Error: {e}")
+        try: await status_msg.edit_text(f"❌ خطا: {e}")
         except: pass
 
 # --- Helpers ---

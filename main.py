@@ -71,7 +71,7 @@ CLOUDFLARE_API_TOKEN = "oG_r_b0Y-7exOWXcrg9MlLa1fPW9fkepcGU-DfhW"
 CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
 

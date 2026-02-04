@@ -67,7 +67,6 @@ CLOUDFLARE_API_TOKEN = "oG_r_b0Y-7exOWXcrg9MlLa1fPW9fkepcGU-DfhW"
 CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
 
 # --- Database Setup (MongoDB) ---
-# URI از فایل main.txt برداشته شد چون معتبر به نظر می‌رسید
 MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
@@ -283,7 +282,6 @@ async def search_and_download_media(client, message, query, media_type='video'):
     status_msg = await message.reply_text(f"🔍 در حال جستجو برای: {query} ...")
     try:
         # 1. Search Logic (Using DuckDuckGo HTML as it's easier to scrape without API keys)
-        # Using a generic user agent to avoid blocks
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         search_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
         
@@ -296,58 +294,63 @@ async def search_and_download_media(client, message, query, media_type='video'):
                     return
                 html = await resp.text()
                 
-                # Simple regex to find links (unfiltered)
-                # We prioritize direct media links if visible in results
-                links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
-                
-                for link in links:
-                    link = unquote(link)
-                    if "duckduckgo" in link or "google" in link or "yandex" in link: continue
-                    
-                    link_lower = link.lower()
-                    if media_type == 'video':
-                        if link_lower.endswith(('.mp4', '.mkv', '.mov')):
-                            found_url = link
-                            break
-                    elif media_type == 'image':
-                        if link_lower.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                            found_url = link
-                            break
-                
-                # Fallback: Try a public API for images if image requested (Unsplash/LoremPicsum are filtered/generic)
-                # Since user requested unfiltered, we rely on search results mostly.
-                if not found_url and media_type == 'image':
-                     # Just try to grab the first non-search engine link that looks like an image container or try a generic image fetch
-                     # For stability in this code, we'll try a generic fallback if direct scraping failed
-                     pass
-                
-        if found_url:
-            await status_msg.edit_text("⬇️ در حال دانلود ...")
+        # Extract all potential links
+        links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
+        
+        # Iterate through links to find a suitable one
+        for link in links:
+            link = unquote(link)
+            if any(x in link for x in ["duckduckgo", "google", "yandex", "adserver"]): continue
             
-            async with aiohttp.ClientSession() as dl_session:
-                async with dl_session.get(found_url) as dl_resp:
-                    if dl_resp.status == 200:
-                        content_length = int(dl_resp.headers.get('Content-Length', 0))
-                        if content_length > 50 * 1024 * 1024: # > 50MB
-                            await status_msg.edit_text(f"⚠️ فایل پیدا شده حجم بالایی دارد (بیش از 50 مگابایت). \n🔗 لینک: {found_url}")
-                            return
-                        
-                        file_data = await dl_resp.read()
-                        file_name = f"download_{int(time.time())}.{'mp4' if media_type=='video' else 'jpg'}"
-                        with open(file_name, 'wb') as f:
-                            f.write(file_data)
-                        
-                        await status_msg.edit_text("📤 در حال آپلود ...")
-                        if media_type == 'video':
-                            await client.send_video(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
-                        else:
-                            await client.send_photo(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
-                        
-                        os.remove(file_name)
-                        await status_msg.delete()
-                        return
+            link_lower = link.lower()
+            is_target = False
+            
+            if media_type == 'video':
+                if link_lower.endswith(('.mp4', '.mkv', '.mov')):
+                    is_target = True
+            elif media_type == 'image':
+                if link_lower.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                    is_target = True
+            
+            if is_target:
+                # Check file size before downloading fully
+                try:
+                    async with aiohttp.ClientSession() as dl_session:
+                        # Use a timeout to skip slow links quickly
+                        async with dl_session.get(link, timeout=10) as dl_resp:
+                            if dl_resp.status == 200:
+                                content_length = int(dl_resp.headers.get('Content-Length', 0))
+                                
+                                # 🔴 CHANGE: Skip if file is too big (> 50MB) and try next link
+                                if content_length > 50 * 1024 * 1024:
+                                    continue 
+                                
+                                # If size is okay or unknown (0), try to download
+                                await status_msg.edit_text("⬇️ فایل مناسب پیدا شد. در حال دانلود ...")
+                                file_data = await dl_resp.read()
+                                
+                                # Double check size after download if header was missing
+                                if len(file_data) > 50 * 1024 * 1024:
+                                    continue
 
-        await status_msg.edit_text(f"❌ فایل مستقیم و مناسبی برای '{query}' پیدا نشد. ممکن است لینک‌ها محافظت شده باشند.")
+                                file_name = f"download_{int(time.time())}.{'mp4' if media_type=='video' else 'jpg'}"
+                                with open(file_name, 'wb') as f:
+                                    f.write(file_data)
+                                
+                                await status_msg.edit_text("📤 در حال آپلود ...")
+                                if media_type == 'video':
+                                    await client.send_video(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
+                                else:
+                                    await client.send_photo(message.chat.id, file_name, caption=f"✅ نتیجه جستجو برای: {query}", reply_to_message_id=message.id)
+                                
+                                os.remove(file_name)
+                                await status_msg.delete()
+                                return # Success! Exit function.
+                except Exception as e:
+                    # If link fails, just ignore and try next one
+                    continue
+
+        await status_msg.edit_text(f"❌ فایل مناسبی با حجم زیر 50 مگابایت برای '{query}' پیدا نشد.")
         
     except Exception as e:
         logging.error(f"Search Download Error: {e}")
@@ -672,7 +675,8 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+        if sessions_collection is not None:
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
     except: return
 
     if user_id in ACTIVE_BOTS:
@@ -857,7 +861,7 @@ async def text_handler(client, message):
 
 async def finalize(message, user_c, phone):
     s_str = await user_c.export_session_string(); me = await user_c.get_me(); await user_c.disconnect()
-    if sessions_collection:
+    if sessions_collection is not None:
         sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': s_str, 'user_id': me.id}}, upsert=True)
     asyncio.create_task(start_bot_instance(s_str, phone, 'stylized'))
     del LOGIN_STATES[message.chat.id]; await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
@@ -868,7 +872,7 @@ def home(): return "Bot is running..."
 
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
-    if sessions_collection:
+    if sessions_collection is not None:
         for doc in sessions_collection.find():
             asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
     await manager_bot.start(); await idle()

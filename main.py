@@ -5,7 +5,7 @@ import re
 import aiohttp
 import time
 import json
-import io  # Added for image handling
+import io
 from urllib.parse import quote, unquote
 from pyrogram import Client, filters, idle
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler, InlineQueryHandler
@@ -62,7 +62,10 @@ API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 # 🔴🔴🔴 توکن ربات منیجر 🔴🔴🔴
 BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
 
-# --- Cloudflare Workers AI Configuration (From main.txt) ---
+# 🔴🔴🔴 سشن استرینگ ثابت (برای جلوگیری از لاگین مجدد) 🔴🔴🔴
+FIXED_SESSION_STRING = ""
+
+# --- Cloudflare Workers AI Configuration ---
 CLOUDFLARE_ACCOUNT_ID = "ce2e4697a5504848b6f18b15dda6eee9"
 CLOUDFLARE_API_TOKEN = "oG_r_b0Y-7exOWXcrg9MlLa1fPW9fkepcGU-DfhW"
 CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
@@ -71,14 +74,13 @@ CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
 MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
-learning_collection = None # Added for consistency with main.txt structure if needed
+
 if MONGO_URI and "<db_password>" not in MONGO_URI:
     try:
         mongo_client = MongoClient(MONGO_URI, server_api=ServerApi('1'), tlsCAFile=certifi.where())
         mongo_client.admin.command('ping')
         db = mongo_client['telegram_self_bot']
         sessions_collection = db['sessions']
-        learning_collection = db['ai_learning']
         logging.info("Successfully connected to MongoDB!")
     except Exception as e:
         logging.error(f"Could not connect to MongoDB: {e}")
@@ -116,7 +118,6 @@ CLOCK_CHARS_REGEX_CLASS = f"[{re.escape(ALL_CLOCK_CHARS)}]"
 ENEMY_REPLIES = ["ببخشید متوجه نشدم؟", "داری فشار میخوری؟", "برو پیش بزرگترت", "سطحت پایینه", "😂😂", "اوکی بای"] 
 SECRETARY_REPLY_MESSAGE = "سلام! در حال حاضر آفلاین هستم و پیام شما را دریافت کردم. در اولین فرصت پاسخ خواهم داد. ممنون از پیامتون."
 
-# --- Help Text ---
 HELP_TEXT = """
 **[ 🛠 دستورات دستی و ریپلای ]**
 ━━━━━━━━━━━━━━━━━━━━
@@ -146,15 +147,15 @@ HELP_TEXT = """
   » `حذف عکس` (حذف عکس پنل)
 ━━━━━━━━━━━━━━━━━━━━
 """
-
 COMMAND_REGEX = r"^(راهنما|ذخیره|تکرار \d+|حذف \d+|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تنظیم عکس|حذف عکس|پنل|panel|دانلود .*|عکس .*)$"
 
-# --- State Management ---
+# --- Global State Dictionaries (Memory Cache) ---
+# These will be populated from DB on startup
 ACTIVE_ENEMIES = {}
 ENEMY_REPLY_QUEUES = {}
 SECRETARY_MODE_STATUS = {}
-AI_SECRETARY_STATUS = {} # New: AI Secretary Status
-AI_CONVERSATION_HISTORY = {} # New: AI History
+AI_SECRETARY_STATUS = {}
+AI_CONVERSATION_HISTORY = {}
 USERS_REPLIED_IN_SECRETARY = {}
 MUTED_USERS = {}
 USER_FONT_CHOICES = {}
@@ -170,10 +171,74 @@ GLOBAL_ENEMY_STATUS = {}
 TYPING_MODE_STATUS = {}
 PLAYING_MODE_STATUS = {}
 PV_LOCK_STATUS = {}
-
 ACTIVE_BOTS = {}
 
-# --- Helpers ---
+# --- Database Helpers ---
+def load_user_settings(user_id):
+    """Load settings from DB into memory"""
+    if sessions_collection is None: return
+    try:
+        doc = sessions_collection.find_one({'user_id': user_id})
+        if doc:
+            settings = doc.get('settings', {})
+            CLOCK_STATUS[user_id] = settings.get('clock', True)
+            USER_FONT_CHOICES[user_id] = settings.get('font', 'stylized')
+            BOLD_MODE_STATUS[user_id] = settings.get('bold', False)
+            SECRETARY_MODE_STATUS[user_id] = settings.get('secretary', False)
+            AI_SECRETARY_STATUS[user_id] = settings.get('ai_secretary', False)
+            AUTO_SEEN_STATUS[user_id] = settings.get('seen', False)
+            PV_LOCK_STATUS[user_id] = settings.get('pv_lock', False)
+            ANTI_LOGIN_STATUS[user_id] = settings.get('anti_login', False)
+            TYPING_MODE_STATUS[user_id] = settings.get('typing', False)
+            PLAYING_MODE_STATUS[user_id] = settings.get('playing', False)
+            GLOBAL_ENEMY_STATUS[user_id] = settings.get('global_enemy', False)
+            AUTO_TRANSLATE_TARGET[user_id] = settings.get('translate', None)
+            logging.info(f"Loaded settings for user {user_id}")
+    except Exception as e:
+        logging.error(f"Error loading settings: {e}")
+
+def save_user_setting(user_id, key, value):
+    """Update a single setting in DB and memory"""
+    # 1. Update Memory
+    if key == 'clock': CLOCK_STATUS[user_id] = value
+    elif key == 'font': USER_FONT_CHOICES[user_id] = value
+    elif key == 'bold': BOLD_MODE_STATUS[user_id] = value
+    elif key == 'secretary': SECRETARY_MODE_STATUS[user_id] = value
+    elif key == 'ai_secretary': AI_SECRETARY_STATUS[user_id] = value
+    elif key == 'seen': AUTO_SEEN_STATUS[user_id] = value
+    elif key == 'pv_lock': PV_LOCK_STATUS[user_id] = value
+    elif key == 'anti_login': ANTI_LOGIN_STATUS[user_id] = value
+    elif key == 'typing': TYPING_MODE_STATUS[user_id] = value
+    elif key == 'playing': PLAYING_MODE_STATUS[user_id] = value
+    elif key == 'global_enemy': GLOBAL_ENEMY_STATUS[user_id] = value
+    elif key == 'translate': AUTO_TRANSLATE_TARGET[user_id] = value
+
+    # 2. Update DB
+    if sessions_collection is not None:
+        try:
+            sessions_collection.update_one(
+                {'user_id': user_id},
+                {'$set': {f'settings.{key}': value}},
+                upsert=True
+            )
+        except Exception as e:
+            logging.error(f"Error saving setting {key}: {e}")
+
+def get_panel_photo(user_id):
+    if sessions_collection is not None:
+        doc = sessions_collection.find_one({'user_id': user_id})
+        return doc.get('panel_photo') if doc else None
+    return None
+
+def set_panel_photo_db(user_id, file_id):
+    if sessions_collection is not None:
+        sessions_collection.update_one({'user_id': user_id}, {'$set': {'panel_photo': file_id}}, upsert=False)
+
+def del_panel_photo_db(user_id):
+    if sessions_collection is not None:
+        sessions_collection.update_one({'user_id': user_id}, {'$unset': {'panel_photo': ""}})
+
+# --- Logic Functions ---
 def stylize_time(time_str: str, style: str) -> str:
     font_map = FONT_STYLES.get(style, FONT_STYLES["stylized"])
     return ''.join(font_map.get(char, char) for char in time_str)
@@ -209,74 +274,29 @@ async def translate_text(text: str, target_lang: str) -> str:
     except: pass
     return text
 
-def get_panel_photo(user_id):
-    if sessions_collection is not None:
-        doc = sessions_collection.find_one({'user_id': user_id})
-        return doc.get('panel_photo') if doc else None
-    return None
-
-def set_panel_photo_db(user_id, file_id):
-    if sessions_collection is not None:
-        sessions_collection.update_one({'user_id': user_id}, {'$set': {'panel_photo': file_id}}, upsert=False)
-
-def del_panel_photo_db(user_id):
-    if sessions_collection is not None:
-        sessions_collection.update_one({'user_id': user_id}, {'$unset': {'panel_photo': ""}})
-
-# --- AI Logic (From main.txt) ---
+# --- AI & Download Logic ---
 async def get_ai_response(user_message: str, user_name: str = "کاربر", user_id: int = None, sender_id: int = None) -> str:
-    """Get AI response from Cloudflare Workers AI"""
     try:
-        # Hard guard for insults
-        try:
-            msg_l = (user_message or "").lower()
-            insult_keywords = ["کیر", "کس", "کص", "کونی", "حروم", "جنده", "مادر", "ناموس", "fuck", "bitch", "بی ناموس"]
-            if any(k in msg_l for k in insult_keywords):
-                return "با احترام حرف بزن. اگه قصد گفتگو داری محترمانه بگو."
-        except Exception: pass
+        msg_l = (user_message or "").lower()
+        insult_keywords = ["کیر", "کس", "کص", "کونی", "حروم", "جنده", "مادر", "ناموس", "fuck", "bitch", "بی ناموس"]
+        if any(k in msg_l for k in insult_keywords):
+            return "با احترام حرف بزن."
 
         url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_AI_MODEL}"
+        headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}", "Content-Type": "application/json"}
         
-        headers = {
-            "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
-            "Content-Type": "application/json"
-        }
-        
-        # Check conversation history
-        if user_id not in AI_CONVERSATION_HISTORY:
-            AI_CONVERSATION_HISTORY[user_id] = {}
-        if sender_id not in AI_CONVERSATION_HISTORY[user_id]:
-            AI_CONVERSATION_HISTORY[user_id][sender_id] = []
+        if user_id not in AI_CONVERSATION_HISTORY: AI_CONVERSATION_HISTORY[user_id] = {}
+        if sender_id not in AI_CONVERSATION_HISTORY[user_id]: AI_CONVERSATION_HISTORY[user_id][sender_id] = []
         
         recent_messages = AI_CONVERSATION_HISTORY[user_id][sender_id]
-        first_interaction = len(recent_messages) == 0
-        
-        # Add current message
         recent_messages.append(f"کاربر: {user_message}")
-        if len(recent_messages) > 6:
-            recent_messages = recent_messages[-6:]
-            AI_CONVERSATION_HISTORY[user_id][sender_id] = recent_messages
+        if len(recent_messages) > 6: recent_messages = recent_messages[-6:]
+        AI_CONVERSATION_HISTORY[user_id][sender_id] = recent_messages
         
         context = "\n".join(recent_messages[-3:]) if recent_messages else ""
+        system_prompt = f"""You are a smart assistant for {user_name}. Current conversation:\n{context}\nReply short and directly."""
         
-        if first_interaction:
-            system_prompt = f"""تو یه انسان باهوش و ذکی هستی که منشی {user_name} شدی.
-            فقط الان بگو: "سلام، من منشی {user_name} هستم!"
-            بعدش دیگه هیچ وقت نگو منشی هستی. مثل یه دوست عادی حرف بزن.
-            قوانین: کوتاه بنویس (حداکثر دو جمله)، نگو "چی گفتی"، مستقیم جواب بده. اگر پرسید صاحب اکانت کجاست بگو "نمیدونم".
-            """
-        else:
-            system_prompt = f"""تو یه انسان باهوش هستی. مثل یه دوست ذکی حرف بزن.
-            آخرین مکالمه: {context}
-            قوانین: کوتاه بنویس، مستقیم جواب بده، تکراری جواب نده.
-            """
-        
-        payload = {
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ]
-        }
+        payload = {"messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}]}
         
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as session:
             async with session.post(url, headers=headers, json=payload) as response:
@@ -284,150 +304,161 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
                     result = await response.json()
                     if result.get("success") and result.get("result"):
                         ai_response = result["result"].get("response", "").strip()
-                        # Cleanup AI tags
-                        for tag in ["هوش مصنوعی", "مدل زبانی", "AI", "ربات"]:
-                            ai_response = ai_response.replace(tag, "")
-                        
+                        for tag in ["AI", "Robot"]: ai_response = ai_response.replace(tag, "")
                         recent_messages.append(f"منشی: {ai_response}")
                         return ai_response
-        
-        return "سلام! الان یکم مشکل دارم، بعداً پیام بده."
-    except Exception as e:
-        logging.error(f"AI Error: {e}")
-        return "سلام! الان مشغولم، بعداً پیام بده."
+        return "بعدا پیام بده."
+    except: return "بعدا پیام بده."
 
 async def search_and_send_image_logic(client, chat_id, query):
-    """Search and send an image based on query with robust download"""
+    """Robust Image Search: Downloads to RAM then sends as file"""
     status_msg = None
     try:
         await client.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
-        status_msg = await client.send_message(chat_id, f"🖼 در حال دریافت تصویر برای: **{query}**...")
+        status_msg = await client.send_message(chat_id, f"🖼 دریافت تصویر: **{query}**...")
         
-        image_url = f"https://image.pollinations.ai/prompt/{quote(query)}?width=800&height=600&nologo=true"
+        # Use headers to mimic a browser to avoid 403 Forbidden
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        image_url = f"https://image.pollinations.ai/prompt/{quote(query)}?width=1024&height=1024&nologo=true"
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=30) as response:
+            async with session.get(image_url, headers=headers, timeout=30) as response:
                 if response.status == 200:
                     data = await response.read()
                     if data:
+                        # 1. Store in RAM
                         file_obj = io.BytesIO(data)
-                        file_obj.name = f"{query}.jpg" # Give it a name so Telegram treats it as a file
-                        await client.send_photo(chat_id, file_obj, caption=f"🖼 تصویر برای: **{query}**")
+                        file_obj.name = f"{query.replace(' ', '_')}.jpg"
+                        
+                        # 2. Upload raw bytes to Telegram
+                        await client.send_photo(chat_id, file_obj, caption=f"🖼 تصویر: **{query}**")
                         if status_msg: await status_msg.delete()
                     else:
-                        if status_msg: await status_msg.edit_text("❌ داده‌ای دریافت نشد.")
+                        if status_msg: await status_msg.edit_text("❌ داده عکس خالی بود.")
                 else:
-                    if status_msg: await status_msg.edit_text("❌ خطا در ارتباط با سرور عکس.")
+                    if status_msg: await status_msg.edit_text(f"❌ خطا در سرور عکس: {response.status}")
     except Exception as e:
-        logging.error(f"Image search error: {e}")
-        try:
+        logging.error(f"Image Error: {e}")
+        try: 
             if status_msg: await status_msg.edit_text(f"⚠️ خطا: {str(e)}")
-            else: await client.send_message(chat_id, "⚠️ عکسی پیدا نشد یا خطایی رخ داد.")
+            else: await client.send_message(chat_id, f"⚠️ خطا در دریافت عکس.")
         except: pass
 
 async def get_web_video_url(query):
-    """Simple DuckDuckGo HTML scraper to find a video link"""
+    """Scrapes DuckDuckGo HTML for video links"""
     try:
         search_url = "https://html.duckduckgo.com/html/"
         data = {'q': query + " video"}
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': 'https://html.duckduckgo.com/'
+        }
         async with aiohttp.ClientSession() as session:
             async with session.post(search_url, data=data, headers=headers) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    # Basic regex to find common video sites
+                    # Find links
                     links = re.findall(r'class="result__a" href="([^"]+)"', html)
                     video_domains = ['youtube.com', 'youtu.be', 'instagram.com', 'tiktok.com', 'twitter.com', 'x.com', 'facebook.com']
                     
                     for link in links:
-                        decoded_link = unquote(link)
-                        # Remove DDG redirect wrapper if present
-                        if "uddg=" in decoded_link:
+                        d_link = unquote(link)
+                        # Clean DDG redirect
+                        if "uddg=" in d_link: 
                             try:
-                                decoded_link = decoded_link.split("uddg=")[1].split("&")[0]
-                                decoded_link = unquote(decoded_link)
+                                d_link = unquote(d_link.split("uddg=")[1].split("&")[0])
                             except: pass
                         
-                        if any(dom in decoded_link for dom in video_domains):
-                            return decoded_link
+                        if any(dom in d_link for dom in video_domains): 
+                            return d_link
     except Exception as e:
-        logging.error(f"Search error: {e}")
+        logging.error(f"Search Error: {e}")
     return None
 
 async def download_web_video_logic(client, chat_id, query):
-    """Search Google/Web and download video using Cobalt API"""
+    """Robust Video Download: Downloads to RAM then sends"""
     status_msg = None
     try:
         await client.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
-        status_msg = await client.send_message(chat_id, f"🌍 در حال جستجو در وب برای: **{query}**...")
+        status_msg = await client.send_message(chat_id, f"🌍 جستجو و دانلود: **{query}**...")
         
-        # 1. Search for a video link
+        # 1. Find Link
         video_link = await get_web_video_url(query)
-        
         if not video_link:
-             await status_msg.edit_text("❌ ویدیوی مناسبی در نتایج اولیه وب یافت نشد.")
+             await status_msg.edit_text("❌ لینک مناسبی در نتایج وب پیدا نشد.")
              return
-
-        await status_msg.edit_text(f"🔗 لینک یافت شد: `{video_link}`\n⬇️ در حال دانلود...")
-
-        # 2. Use Cobalt API to get direct download stream (Robust, no API key needed)
+        
+        await status_msg.edit_text(f"🔗 لینک: `{video_link}`\n⬇️ در حال پردازش و دانلود...")
+        
+        # 2. Cobalt API Request
         cobalt_api = "https://api.cobalt.tools/api/json"
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        payload = {"url": video_link}
-
+        # Request lower quality to ensure file size is small and download works
+        payload = {
+            "url": video_link,
+            "videoQuality": "480",
+            "filenamePattern": "basic"
+        }
+        
         async with aiohttp.ClientSession() as session:
             async with session.post(cobalt_api, json=payload, headers=headers) as resp:
                 if resp.status != 200:
-                    await status_msg.edit_text("❌ خطا در سرویس دانلودر.")
+                    await status_msg.edit_text("❌ خطا در API دانلودر (Cobalt).")
                     return
                 
                 data = await resp.json()
                 
                 if 'url' not in data:
-                     await status_msg.edit_text("❌ دانلودر نتوانست لینک مستقیم تولید کند.")
+                     # Check for specific error message
+                     err = data.get('text', 'Unknown Error')
+                     await status_msg.edit_text(f"❌ دانلودر خطا داد: {err}")
                      return
                 
                 download_url = data['url']
                 
-                # 3. Stream download and send
-                async with session.get(download_url) as video_resp:
-                    if video_resp.status == 200:
-                        video_bytes = await video_resp.read()
-                        if len(video_bytes) > 50 * 1024 * 1024:
-                            await status_msg.edit_text("⚠️ حجم ویدیو بیشتر از ۵۰ مگابایت است.")
-                            return
-
-                        file_obj = io.BytesIO(video_bytes)
-                        file_obj.name = "video.mp4"
+                # 3. Download File to RAM
+                async with session.get(download_url) as v_resp:
+                    if v_resp.status == 200:
+                        v_bytes = await v_resp.read()
                         
-                        await client.send_video(chat_id, file_obj, caption=f"🎥 دانلود از وب: **{query}**\n🔗 منبع: {video_link}")
+                        if len(v_bytes) > 50 * 1024 * 1024:
+                            await status_msg.edit_text("⚠️ حجم فایل بیشتر از ۵۰ مگابایت است.")
+                            return
+                        
+                        if len(v_bytes) < 1000: # Too small, probably an error page
+                             await status_msg.edit_text("❌ فایل دانلود شده نامعتبر است.")
+                             return
+
+                        f_obj = io.BytesIO(v_bytes)
+                        f_obj.name = "video.mp4"
+                        
+                        # 4. Upload to Telegram
+                        await client.send_video(chat_id, f_obj, caption=f"🎥 **{query}**\n🔗 {video_link}")
                         await status_msg.delete()
                     else:
-                        await status_msg.edit_text("❌ خطا در دریافت فایل ویدیو.")
+                        await status_msg.edit_text("❌ خطا در دانلود فایل نهایی.")
 
     except Exception as e:
-        logging.error(f"Web Download Error: {e}")
-        try: 
-            if status_msg: await status_msg.edit_text(f"⚠️ خطا: {str(e)}")
-            else: await client.send_message(chat_id, f"⚠️ خطا: {str(e)}")
+        logging.error(f"Download Task Error: {e}")
+        try: await status_msg.edit_text(f"⚠️ خطا: {str(e)}")
         except: pass
 
-# --- Tasks ---
+# --- Background Tasks ---
 async def update_profile_clock(client: Client, user_id: int):
     while user_id in ACTIVE_BOTS:
         try:
+            # Check DB/Memory state
             if CLOCK_STATUS.get(user_id, True) and not COPY_MODE_STATUS.get(user_id, False):
                 await perform_clock_update_now(client, user_id)
-            
             now = datetime.now(TEHRAN_TIMEZONE)
             await asyncio.sleep(60 - now.second + 0.1)
-        except Exception:
-            await asyncio.sleep(60)
+        except Exception: await asyncio.sleep(60)
 
 async def anti_login_task(client: Client, user_id: int):
     while user_id in ACTIVE_BOTS:
@@ -441,8 +472,7 @@ async def anti_login_task(client: Client, user_id: int):
                             await client.invoke(functions.account.ResetAuthorization(hash=auth.hash))
                             await client.send_message("me", f"🚨 نشست غیرمجاز حذف شد: {auth.device_model}")
             await asyncio.sleep(60)
-        except Exception:
-            await asyncio.sleep(120)
+        except Exception: await asyncio.sleep(120)
 
 async def status_action_task(client: Client, user_id: int):
     chat_ids = []
@@ -467,19 +497,22 @@ async def status_action_task(client: Client, user_id: int):
                 try: await client.send_chat_action(chat_id, action)
                 except: pass
             await asyncio.sleep(4)
-        except Exception:
-            await asyncio.sleep(60)
+        except Exception: await asyncio.sleep(60)
 
-# --- Handlers ---
+# --- Message Handlers ---
 async def outgoing_message_modifier(client, message):
     user_id = client.me.id
     if not message.text or re.match(COMMAND_REGEX, message.text.strip(), re.IGNORECASE): return
     original_text = message.text
     modified_text = original_text
+    
+    # Check Memory (loaded from DB)
     target_lang = AUTO_TRANSLATE_TARGET.get(user_id)
     if target_lang: modified_text = await translate_text(modified_text, target_lang)
+    
     if BOLD_MODE_STATUS.get(user_id, False):
         if not modified_text.startswith(('`', '**', '__', '~~', '||')): modified_text = f"**{modified_text}**"
+        
     if modified_text != original_text:
         try: await message.edit_text(modified_text)
         except: pass
@@ -495,47 +528,36 @@ async def enemy_handler(client, message):
 
 async def secretary_auto_reply_handler(client, message):
     owner_id = client.me.id
-    # Check if ANY secretary mode is on
     ai_mode = AI_SECRETARY_STATUS.get(owner_id, False)
     normal_mode = SECRETARY_MODE_STATUS.get(owner_id, False)
     
     if message.from_user and (ai_mode or normal_mode):
         target_id = message.from_user.id
-        
-        # AI Mode (Replies to everything naturally)
         if ai_mode:
             user_msg = message.text or "[مدیا]"
             user_name = message.from_user.first_name or "کاربر"
             response = await get_ai_response(user_msg, user_name, owner_id, target_id)
             try: await message.reply_text(response)
             except: pass
-            return
-
-        # Normal Mode (Replies once)
-        replied = USERS_REPLIED_IN_SECRETARY.get(owner_id, set())
-        if target_id not in replied:
-            try:
-                await message.reply_text(SECRETARY_REPLY_MESSAGE)
-                replied.add(target_id)
-                USERS_REPLIED_IN_SECRETARY[owner_id] = replied
-            except: pass
+        else:
+            replied = USERS_REPLIED_IN_SECRETARY.get(owner_id, set())
+            if target_id not in replied:
+                try:
+                    await message.reply_text(SECRETARY_REPLY_MESSAGE)
+                    replied.add(target_id)
+                    USERS_REPLIED_IN_SECRETARY[owner_id] = replied
+                except: pass
 
 async def media_command_handler(client, message):
-    """Handle new media commands"""
     cmd = message.text.strip()
     if cmd.startswith("دانلود "):
         query = cmd[7:].strip()
-        if query:
-            # CHANGED: Now uses web download logic instead of Telegram search
-            await download_web_video_logic(client, message.chat.id, query)
-        else:
-            await message.edit_text("⚠️ چی دانلود کنم؟ مثال: `دانلود فیلم`")
+        if query: await download_web_video_logic(client, message.chat.id, query)
+        else: await message.edit_text("⚠️ چی دانلود کنم؟")
     elif cmd.startswith("عکس "):
         query = cmd[4:].strip()
-        if query:
-            await search_and_send_image_logic(client, message.chat.id, query)
-        else:
-            await message.edit_text("⚠️ لطفا موضوع عکس را بنویسید. مثال: `عکس کوه`")
+        if query: await search_and_send_image_logic(client, message.chat.id, query)
+        else: await message.edit_text("⚠️ موضوع عکس؟")
 
 async def incoming_message_manager(client, message):
     if not message.from_user: return
@@ -560,22 +582,19 @@ async def panel_command_controller(client, message):
         if results and results.results:
             await message.delete()
             await client.send_inline_bot_result(message.chat.id, results.query_id, results.results[0].id)
-        else:
-            await message.edit_text("❌ خطا: حالت Inline ربات فعال نیست.")
-    except ChatSendInlineForbidden:
-        await message.edit_text("🚫 در این چت اجازه ارسال پنل بصورت اینلاین وجود ندارد. لطفاً در پیوی یا پیام‌های ذخیره شده تست کنید.")
+        else: await message.edit_text("❌ ربات منیجر استارت نیست.")
     except Exception as e:
-        try: await message.edit_text(f"❌ خطا در لود پنل: {e}\n\n⚠️ از استارت بودن @{bot_username} مطمئن شوید.")
+        try: await message.edit_text(f"❌ خطا: {e}")
         except: pass
 
 async def photo_setting_controller(client, message):
     user_id = client.me.id
     if message.text == "تنظیم عکس" and message.reply_to_message and message.reply_to_message.photo:
         set_panel_photo_db(user_id, message.reply_to_message.photo.file_id)
-        await message.edit_text("✅ عکس پنل ذخیره شد.")
+        await message.edit_text("✅ عکس ذخیره شد.")
     elif message.text == "حذف عکس":
         del_panel_photo_db(user_id)
-        await message.edit_text("🗑 عکس پنل حذف شد.")
+        await message.edit_text("🗑 عکس حذف شد.")
 
 async def reply_based_controller(client, message):
     user_id = client.me.id
@@ -587,7 +606,7 @@ async def reply_based_controller(client, message):
         except: pass
     elif cmd == "لیست دشمن":
         enemies = ACTIVE_ENEMIES.get(user_id, set())
-        await message.edit_text(f"📜 تعداد دشمنان فعال: {len(enemies)}")
+        await message.edit_text(f"📜 دشمنان: {len(enemies)}")
     elif message.reply_to_message:
         target_id = message.reply_to_message.from_user.id if message.reply_to_message.from_user else None
         if cmd.startswith("حذف "):
@@ -612,7 +631,8 @@ async def reply_based_controller(client, message):
                 me = await client.get_me()
                 ORIGINAL_PROFILE_DATA[user_id] = {'first_name': me.first_name, 'bio': me.bio}
                 COPY_MODE_STATUS[user_id] = True
-                CLOCK_STATUS[user_id] = False
+                CLOCK_STATUS[user_id] = False # Force clock off when copy is on
+                # Note: Not saving COPY MODE to DB to prevent getting stuck in copy mode on restart, but could if needed.
                 target_photos = [p async for p in client.get_chat_photos(target_id, limit=1)]
                 await client.update_profile(first_name=user.first_name, bio=(user.bio or "")[:70])
                 if target_photos: await client.set_profile_photo(photo=target_photos[0].file_id)
@@ -629,14 +649,14 @@ async def reply_based_controller(client, message):
             elif cmd == "دشمن خاموش":
                 s = ACTIVE_ENEMIES.get(user_id, set()); s.discard((target_id, message.chat.id)); ACTIVE_ENEMIES[user_id] = s
                 await message.edit_text("🏳️ دشمن حذف شد.")
-            elif cmd == "بلاک روشن": await client.block_user(target_id); await message.edit_text("🚫 کاربر بلاک شد.")
-            elif cmd == "بلاک خاموش": await client.unblock_user(target_id); await message.edit_text("⭕️ کاربر آنبلاک شد.")
+            elif cmd == "بلاک روشن": await client.block_user(target_id); await message.edit_text("🚫 بلاک شد.")
+            elif cmd == "بلاک خاموش": await client.unblock_user(target_id); await message.edit_text("⭕️ آنبلاک شد.")
             elif cmd == "سکوت روشن":
                 s = MUTED_USERS.get(user_id, set()); s.add((target_id, message.chat.id)); MUTED_USERS[user_id] = s
-                await message.edit_text("🔇 کاربر ساکت شد.")
+                await message.edit_text("🔇 ساکت شد.")
             elif cmd == "سکوت خاموش":
                 s = MUTED_USERS.get(user_id, set()); s.discard((target_id, message.chat.id)); MUTED_USERS[user_id] = s
-                await message.edit_text("🔊 کاربر از سکوت خارج شد.")
+                await message.edit_text("🔊 از سکوت خارج شد.")
             elif cmd.startswith("ریاکشن ") and cmd != "ریاکشن خاموش":
                 emoji = cmd.split()[1]
                 t = AUTO_REACTION_TARGETS.get(user_id, {}); t[target_id] = emoji; AUTO_REACTION_TARGETS[user_id] = t
@@ -645,20 +665,30 @@ async def reply_based_controller(client, message):
                 t = AUTO_REACTION_TARGETS.get(user_id, {}); t.pop(target_id, None); AUTO_REACTION_TARGETS[user_id] = t
                 await message.edit_text("❌ واکنش حذف شد.")
 
-async def start_bot_instance(session_string: str, phone: str, font_style: str, disable_clock: bool = False):
-    client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
+async def start_bot_instance(session_string: str, phone: str = None):
+    # Determine name for logging
+    name_log = phone if phone else "FixedSession"
+    client = Client(f"bot_{name_log}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection is not None: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
-    except: return
+        
+        # 1. Update Mapping if phone provided
+        if phone and sessions_collection is not None:
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+        
+        # 2. LOAD SETTINGS FROM DB (This restores font, clock, bold, etc.)
+        load_user_settings(user_id)
+        
+    except Exception as e:
+        logging.error(f"Failed to start client {name_log}: {e}")
+        return
 
+    # Clear old tasks if any
     if user_id in ACTIVE_BOTS:
         for t in ACTIVE_BOTS[user_id][1]: t.cancel()
     
-    USER_FONT_CHOICES[user_id] = font_style
-    CLOCK_STATUS[user_id] = not disable_clock
-    
+    # Handlers
     client.add_handler(MessageHandler(lambda c, m: m.delete() if PV_LOCK_STATUS.get(c.me.id) else None, filters.private & ~filters.me & ~filters.bot), group=-5)
     client.add_handler(MessageHandler(lambda c, m: c.read_chat_history(m.chat.id) if AUTO_SEEN_STATUS.get(c.me.id) else None, filters.private & ~filters.me), group=-4)
     client.add_handler(MessageHandler(incoming_message_manager, filters.all & ~filters.me), group=-3)
@@ -666,7 +696,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     client.add_handler(MessageHandler(help_controller, filters.me & filters.regex("^راهنما$")))
     client.add_handler(MessageHandler(panel_command_controller, filters.me & filters.regex(r"^(پنل|panel)$")))
     client.add_handler(MessageHandler(photo_setting_controller, filters.me & filters.regex(r"^(تنظیم عکس|حذف عکس)$")))
-    # New handlers for COD and Photo Search
     client.add_handler(MessageHandler(media_command_handler, filters.me & filters.regex(r"^(دانلود .*|عکس .*)")))
     client.add_handler(MessageHandler(reply_based_controller, filters.me)) 
     client.add_handler(MessageHandler(enemy_handler, filters.create(lambda _, c, m: (m.from_user.id, m.chat.id) in ACTIVE_ENEMIES.get(c.me.id, set()) or GLOBAL_ENEMY_STATUS.get(c.me.id)) & ~filters.me), group=1)
@@ -678,17 +707,16 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         asyncio.create_task(status_action_task(client, user_id))
     ]
     ACTIVE_BOTS[user_id] = (client, tasks)
+    logging.info(f"Bot started for {user_id}")
 
-# =======================================================
-# 🤖 MANAGER BOT
-# =======================================================
+# --- Manager Bot ---
 manager_bot = Client("manager_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 def generate_panel_markup(user_id):
     s_clock = "✅" if CLOCK_STATUS.get(user_id, True) else "❌"
     s_bold = "✅" if BOLD_MODE_STATUS.get(user_id, False) else "❌"
     s_sec = "✅" if SECRETARY_MODE_STATUS.get(user_id, False) else "❌"
-    s_ai = "✅" if AI_SECRETARY_STATUS.get(user_id, False) else "❌" # New AI Status
+    s_ai = "✅" if AI_SECRETARY_STATUS.get(user_id, False) else "❌"
     s_seen = "✅" if AUTO_SEEN_STATUS.get(user_id, False) else "❌"
     s_pv = "🔒" if PV_LOCK_STATUS.get(user_id, False) else "🔓"
     s_anti = "✅" if ANTI_LOGIN_STATUS.get(user_id, False) else "❌"
@@ -704,7 +732,7 @@ def generate_panel_markup(user_id):
          InlineKeyboardButton(f"بولد {s_bold}", callback_data=f"toggle_bold_{user_id}")],
         [InlineKeyboardButton(f"تغییر فونت: {preview}", callback_data=f"cycle_font_{user_id}")],
         [InlineKeyboardButton(f"منشی {s_sec}", callback_data=f"toggle_sec_{user_id}"),
-         InlineKeyboardButton(f"منشی AI {s_ai}", callback_data=f"toggle_ai_{user_id}")], # New Button
+         InlineKeyboardButton(f"منشی AI {s_ai}", callback_data=f"toggle_ai_{user_id}")],
         [InlineKeyboardButton(f"سین {s_seen}", callback_data=f"toggle_seen_{user_id}"),
          InlineKeyboardButton(f"پیوی {s_pv}", callback_data=f"toggle_pv_{user_id}")],
         [InlineKeyboardButton(f"انتی لوگین {s_anti}", callback_data=f"toggle_anti_{user_id}"),
@@ -717,24 +745,6 @@ def generate_panel_markup(user_id):
         [InlineKeyboardButton("بستن پنل ❌", callback_data=f"close_panel_{user_id}")]
     ])
 
-@manager_bot.on_inline_query()
-async def inline_panel_handler(client, query):
-    user_id = query.from_user.id
-    if query.query == "panel":
-        photo_id = get_panel_photo(user_id)
-        if photo_id:
-            result = InlineQueryResultPhoto(
-                photo_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg", thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg",
-                photo_file_id=photo_id, caption=f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار",
-                reply_markup=generate_panel_markup(user_id)
-            )
-        else:
-            result = InlineQueryResultArticle(
-                title="پنل مدیریت", input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"),
-                reply_markup=generate_panel_markup(user_id), thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
-            )
-        await query.answer([result], cache_time=0)
-
 @manager_bot.on_callback_query()
 async def callback_panel_handler(client, callback):
     data = callback.data.split("_")
@@ -743,44 +753,61 @@ async def callback_panel_handler(client, callback):
     if callback.from_user.id != target_user_id:
         await callback.answer("⛔️ دسترسی غیرمجاز!", show_alert=True); return
 
+    # USE save_user_setting to persist changes immediately
     if action == "toggle_clock":
-        new_state = not CLOCK_STATUS.get(target_user_id, True)
-        CLOCK_STATUS[target_user_id] = new_state
+        new_val = not CLOCK_STATUS.get(target_user_id, True)
+        save_user_setting(target_user_id, 'clock', new_val)
         if target_user_id in ACTIVE_BOTS:
             bot_client = ACTIVE_BOTS[target_user_id][0]
-            if new_state: asyncio.create_task(perform_clock_update_now(bot_client, target_user_id))
+            if new_val: asyncio.create_task(perform_clock_update_now(bot_client, target_user_id))
             else:
                 try:
                     me = await bot_client.get_me()
-                    clean_name = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', me.first_name).strip()
-                    if clean_name != me.first_name: await bot_client.update_profile(first_name=clean_name)
+                    clean = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', me.first_name).strip()
+                    if clean != me.first_name: await bot_client.update_profile(first_name=clean)
                 except: pass
+
     elif action == "cycle_font":
         cur = USER_FONT_CHOICES.get(target_user_id, 'stylized')
         idx = (FONT_KEYS_ORDER.index(cur) + 1) % len(FONT_KEYS_ORDER)
-        USER_FONT_CHOICES[target_user_id] = FONT_KEYS_ORDER[idx]
-        CLOCK_STATUS[target_user_id] = True
-        if target_user_id in ACTIVE_BOTS: asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[target_user_id][0], target_user_id))
-    elif action == "toggle_bold": BOLD_MODE_STATUS[target_user_id] = not BOLD_MODE_STATUS.get(target_user_id, False)
+        new_font = FONT_KEYS_ORDER[idx]
+        save_user_setting(target_user_id, 'font', new_font)
+        # Force clock update to apply font immediately
+        if target_user_id in ACTIVE_BOTS and CLOCK_STATUS.get(target_user_id, True):
+            asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[target_user_id][0], target_user_id))
+
+    elif action == "toggle_bold":
+        save_user_setting(target_user_id, 'bold', not BOLD_MODE_STATUS.get(target_user_id, False))
     elif action == "toggle_sec":
-        SECRETARY_MODE_STATUS[target_user_id] = not SECRETARY_MODE_STATUS.get(target_user_id, False)
-        if SECRETARY_MODE_STATUS[target_user_id]: AI_SECRETARY_STATUS[target_user_id] = False
+        val = not SECRETARY_MODE_STATUS.get(target_user_id, False)
+        save_user_setting(target_user_id, 'secretary', val)
+        if val: save_user_setting(target_user_id, 'ai_secretary', False)
     elif action == "toggle_ai":
-        AI_SECRETARY_STATUS[target_user_id] = not AI_SECRETARY_STATUS.get(target_user_id, False)
-        if AI_SECRETARY_STATUS[target_user_id]: SECRETARY_MODE_STATUS[target_user_id] = False
-    elif action == "toggle_seen": AUTO_SEEN_STATUS[target_user_id] = not AUTO_SEEN_STATUS.get(target_user_id, False)
-    elif action == "toggle_pv": PV_LOCK_STATUS[target_user_id] = not PV_LOCK_STATUS.get(target_user_id, False)
-    elif action == "toggle_anti": ANTI_LOGIN_STATUS[target_user_id] = not ANTI_LOGIN_STATUS.get(target_user_id, False)
+        val = not AI_SECRETARY_STATUS.get(target_user_id, False)
+        save_user_setting(target_user_id, 'ai_secretary', val)
+        if val: save_user_setting(target_user_id, 'secretary', False)
+    elif action == "toggle_seen":
+        save_user_setting(target_user_id, 'seen', not AUTO_SEEN_STATUS.get(target_user_id, False))
+    elif action == "toggle_pv":
+        save_user_setting(target_user_id, 'pv_lock', not PV_LOCK_STATUS.get(target_user_id, False))
+    elif action == "toggle_anti":
+        save_user_setting(target_user_id, 'anti_login', not ANTI_LOGIN_STATUS.get(target_user_id, False))
     elif action == "toggle_type":
-        TYPING_MODE_STATUS[target_user_id] = not TYPING_MODE_STATUS.get(target_user_id, False)
-        if TYPING_MODE_STATUS[target_user_id]: PLAYING_MODE_STATUS[target_user_id] = False
+        val = not TYPING_MODE_STATUS.get(target_user_id, False)
+        save_user_setting(target_user_id, 'typing', val)
+        if val: save_user_setting(target_user_id, 'playing', False)
     elif action == "toggle_game":
-        PLAYING_MODE_STATUS[target_user_id] = not PLAYING_MODE_STATUS.get(target_user_id, False)
-        if PLAYING_MODE_STATUS[target_user_id]: TYPING_MODE_STATUS[target_user_id] = False
-    elif action == "toggle_g_enemy": GLOBAL_ENEMY_STATUS[target_user_id] = not GLOBAL_ENEMY_STATUS.get(target_user_id, False)
+        val = not PLAYING_MODE_STATUS.get(target_user_id, False)
+        save_user_setting(target_user_id, 'playing', val)
+        if val: save_user_setting(target_user_id, 'typing', False)
+    elif action == "toggle_g_enemy":
+        save_user_setting(target_user_id, 'global_enemy', not GLOBAL_ENEMY_STATUS.get(target_user_id, False))
     elif action.startswith("lang_"):
         l = action.split("_")[1]
-        AUTO_TRANSLATE_TARGET[target_user_id] = l if AUTO_TRANSLATE_TARGET.get(target_user_id) != l else None
+        cur = AUTO_TRANSLATE_TARGET.get(target_user_id)
+        new_l = l if cur != l else None
+        save_user_setting(target_user_id, 'translate', new_l)
+
     elif action == "close_panel":
         try:
             if callback.inline_message_id: await client.edit_inline_text(callback.inline_message_id, "✅ پنل بسته شد.")
@@ -791,7 +818,28 @@ async def callback_panel_handler(client, callback):
     try: await callback.edit_message_reply_markup(generate_panel_markup(target_user_id))
     except: pass
 
-# --- Login Handlers ---
+@manager_bot.on_inline_query()
+async def inline_panel_handler(client, query):
+    user_id = query.from_user.id
+    if query.query == "panel":
+        photo_id = get_panel_photo(user_id)
+        # Load settings fresh to ensure UI is accurate
+        load_user_settings(user_id) 
+        
+        if photo_id:
+            result = InlineQueryResultPhoto(
+                photo_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg", thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg",
+                photo_file_id=photo_id, caption=f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}",
+                reply_markup=generate_panel_markup(user_id)
+            )
+        else:
+            result = InlineQueryResultArticle(
+                title="پنل مدیریت", input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}"),
+                reply_markup=generate_panel_markup(user_id), thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
+            )
+        await query.answer([result], cache_time=0)
+
+# --- Login Flow ---
 @manager_bot.on_message(filters.command("start"))
 async def start_login(client, message):
     kb = ReplyKeyboardMarkup([[KeyboardButton("📱 شماره و شروع", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
@@ -832,20 +880,42 @@ async def text_handler(client, message):
 async def finalize(message, user_c, phone):
     s_str = await user_c.export_session_string(); me = await user_c.get_me(); await user_c.disconnect()
     if sessions_collection is not None:
-        sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': s_str, 'user_id': me.id}}, upsert=True)
-    asyncio.create_task(start_bot_instance(s_str, phone, 'stylized'))
+        # Save session AND default settings if not exists
+        sessions_collection.update_one(
+            {'phone_number': phone}, 
+            {'$set': {'session_string': s_str, 'user_id': me.id}, '$setOnInsert': {'settings': {}}}, 
+            upsert=True
+        )
+    asyncio.create_task(start_bot_instance(s_str, phone))
     del LOGIN_STATES[message.chat.id]; await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
 
-# --- Flask & Run ---
+# --- Main Run ---
 @app_flask.route('/')
 def home(): return "Bot is running..."
 
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
+    
+    # 1. FIXED SESSION PRIORITY
+    if FIXED_SESSION_STRING:
+        logging.info("🚀 Starting FIXED SESSION...")
+        asyncio.create_task(start_bot_instance(FIXED_SESSION_STRING))
+
+    # 2. RESTORE DB SESSIONS
     if sessions_collection is not None:
+        count = 0
         for doc in sessions_collection.find():
-            asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
-    await manager_bot.start(); await idle()
+            if 'session_string' in doc and 'phone_number' in doc:
+                # If fixed session is already running this user, skip?
+                # For simplicity, we just run all valid sessions found
+                asyncio.create_task(start_bot_instance(doc['session_string'], doc['phone_number']))
+                count += 1
+        logging.info(f"🚀 Restoring {count} sessions from Database...")
+    else:
+        logging.warning("⚠️ No DB connection. Persistent sessions unavailable.")
+
+    await manager_bot.start()
+    await idle()
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())

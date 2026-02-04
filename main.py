@@ -5,6 +5,7 @@ import re
 import aiohttp
 import time
 import json
+import io  # Added for image handling
 from urllib.parse import quote
 from pyrogram import Client, filters, idle
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler, InlineQueryHandler
@@ -67,7 +68,7 @@ CLOUDFLARE_API_TOKEN = "oG_r_b0Y-7exOWXcrg9MlLa1fPW9fkepcGU-DfhW"
 CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
 learning_collection = None # Added for consistency with main.txt structure if needed
@@ -296,15 +297,32 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
         return "سلام! الان مشغولم، بعداً پیام بده."
 
 async def search_and_send_image_logic(client, chat_id, query):
-    """Search and send an image based on query"""
+    """Search and send an image based on query with robust download"""
+    status_msg = None
     try:
         await client.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
-        image_url = f"https://image.pollinations.ai/prompt/{quote(query)}"
-        await client.send_photo(chat_id, image_url, caption=f"🖼 نتیجه جستجو برای: **{query}**")
+        status_msg = await client.send_message(chat_id, f"🖼 در حال دریافت تصویر برای: **{query}**...")
+        
+        image_url = f"https://image.pollinations.ai/prompt/{quote(query)}?width=800&height=600&nologo=true"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url, timeout=30) as response:
+                if response.status == 200:
+                    data = await response.read()
+                    if data:
+                        file_obj = io.BytesIO(data)
+                        file_obj.name = f"{query}.jpg" # Give it a name so Telegram treats it as a file
+                        await client.send_photo(chat_id, file_obj, caption=f"🖼 تصویر برای: **{query}**")
+                        if status_msg: await status_msg.delete()
+                    else:
+                        if status_msg: await status_msg.edit_text("❌ داده‌ای دریافت نشد.")
+                else:
+                    if status_msg: await status_msg.edit_text("❌ خطا در ارتباط با سرور عکس.")
     except Exception as e:
         logging.error(f"Image search error: {e}")
         try:
-            await client.send_message(chat_id, "⚠️ عکسی پیدا نشد یا خطایی رخ داد.")
+            if status_msg: await status_msg.edit_text(f"⚠️ خطا: {str(e)}")
+            else: await client.send_message(chat_id, "⚠️ عکسی پیدا نشد یا خطایی رخ داد.")
         except: pass
 
 async def download_video_logic(client, chat_id, query):

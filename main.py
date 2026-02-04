@@ -6,7 +6,7 @@ import aiohttp
 import time
 import json
 import io  # Added for image handling
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from pyrogram import Client, filters, idle
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler, InlineQueryHandler
 from pyrogram.enums import ChatType, ChatAction, MessagesFilter
@@ -136,7 +136,7 @@ HELP_TEXT = """
   » `ریاکشن [شکلک]` | `خاموش` (ریپلای روی کاربر)
 
 **✦ سرگرمی و مدیا**
-  » `دانلود [موضوع]` (دانلود خودکار ویدیو < 50MB)
+  » `دانلود [موضوع]` (جستجو در وب و دانلود خودکار)
   » `عکس [موضوع]` (جستجو و ارسال عکس)
   » `تاس` | `تاس [عدد]`
   » `بولینگ`
@@ -325,31 +325,96 @@ async def search_and_send_image_logic(client, chat_id, query):
             else: await client.send_message(chat_id, "⚠️ عکسی پیدا نشد یا خطایی رخ داد.")
         except: pass
 
-async def download_video_logic(client, chat_id, query):
-    """Search Telegram Global for Any video < 50MB and send"""
+async def get_web_video_url(query):
+    """Simple DuckDuckGo HTML scraper to find a video link"""
+    try:
+        search_url = "https://html.duckduckgo.com/html/"
+        data = {'q': query + " video"}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(search_url, data=data, headers=headers) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Basic regex to find common video sites
+                    links = re.findall(r'class="result__a" href="([^"]+)"', html)
+                    video_domains = ['youtube.com', 'youtu.be', 'instagram.com', 'tiktok.com', 'twitter.com', 'x.com', 'facebook.com']
+                    
+                    for link in links:
+                        decoded_link = unquote(link)
+                        # Remove DDG redirect wrapper if present
+                        if "uddg=" in decoded_link:
+                            try:
+                                decoded_link = decoded_link.split("uddg=")[1].split("&")[0]
+                                decoded_link = unquote(decoded_link)
+                            except: pass
+                        
+                        if any(dom in decoded_link for dom in video_domains):
+                            return decoded_link
+    except Exception as e:
+        logging.error(f"Search error: {e}")
+    return None
+
+async def download_web_video_logic(client, chat_id, query):
+    """Search Google/Web and download video using Cobalt API"""
+    status_msg = None
     try:
         await client.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
-        status_msg = await client.send_message(chat_id, f"🔍 در حال جستجوی: **{query}**\n(ویدیو زیر 50 مگابایت)...")
+        status_msg = await client.send_message(chat_id, f"🌍 در حال جستجو در وب برای: **{query}**...")
         
-        found_video = None
+        # 1. Search for a video link
+        video_link = await get_web_video_url(query)
         
-        # Search global messages
-        async for message in client.search_global(query, limit=50, filter=MessagesFilter.VIDEO):
-            if message.video and message.video.file_size:
-                # Check size (50MB = 50 * 1024 * 1024 bytes approx 52428800)
-                if message.video.file_size < 52 * 1024 * 1024:
-                    found_video = message
-                    break
-        
-        if found_video:
-            await found_video.copy(chat_id, caption=f"🎥 دانلود شد: **{query}**\n✅ حجم مناسب یافت شد.")
-            await status_msg.delete()
-        else:
-            await status_msg.edit_text(f"❌ ویدیوی مناسبی برای '{query}' با حجم زیر 50 مگابایت یافت نشد.")
-            
+        if not video_link:
+             await status_msg.edit_text("❌ ویدیوی مناسبی در نتایج اولیه وب یافت نشد.")
+             return
+
+        await status_msg.edit_text(f"🔗 لینک یافت شد: `{video_link}`\n⬇️ در حال دانلود...")
+
+        # 2. Use Cobalt API to get direct download stream (Robust, no API key needed)
+        cobalt_api = "https://api.cobalt.tools/api/json"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        payload = {"url": video_link}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(cobalt_api, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    await status_msg.edit_text("❌ خطا در سرویس دانلودر.")
+                    return
+                
+                data = await resp.json()
+                
+                if 'url' not in data:
+                     await status_msg.edit_text("❌ دانلودر نتوانست لینک مستقیم تولید کند.")
+                     return
+                
+                download_url = data['url']
+                
+                # 3. Stream download and send
+                async with session.get(download_url) as video_resp:
+                    if video_resp.status == 200:
+                        video_bytes = await video_resp.read()
+                        if len(video_bytes) > 50 * 1024 * 1024:
+                            await status_msg.edit_text("⚠️ حجم ویدیو بیشتر از ۵۰ مگابایت است.")
+                            return
+
+                        file_obj = io.BytesIO(video_bytes)
+                        file_obj.name = "video.mp4"
+                        
+                        await client.send_video(chat_id, file_obj, caption=f"🎥 دانلود از وب: **{query}**\n🔗 منبع: {video_link}")
+                        await status_msg.delete()
+                    else:
+                        await status_msg.edit_text("❌ خطا در دریافت فایل ویدیو.")
+
     except Exception as e:
-        logging.error(f"Download Error: {e}")
-        try: await client.send_message(chat_id, f"⚠️ خطا در جستجو: {e}")
+        logging.error(f"Web Download Error: {e}")
+        try: 
+            if status_msg: await status_msg.edit_text(f"⚠️ خطا: {str(e)}")
+            else: await client.send_message(chat_id, f"⚠️ خطا: {str(e)}")
         except: pass
 
 # --- Tasks ---
@@ -461,7 +526,8 @@ async def media_command_handler(client, message):
     if cmd.startswith("دانلود "):
         query = cmd[7:].strip()
         if query:
-            await download_video_logic(client, message.chat.id, query)
+            # CHANGED: Now uses web download logic instead of Telegram search
+            await download_web_video_logic(client, message.chat.id, query)
         else:
             await message.edit_text("⚠️ چی دانلود کنم؟ مثال: `دانلود فیلم`")
     elif cmd.startswith("عکس "):
@@ -584,7 +650,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+        if sessions_collection is not None: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
     except: return
 
     if user_id in ACTIVE_BOTS:
@@ -765,7 +831,7 @@ async def text_handler(client, message):
 
 async def finalize(message, user_c, phone):
     s_str = await user_c.export_session_string(); me = await user_c.get_me(); await user_c.disconnect()
-    if sessions_collection:
+    if sessions_collection is not None:
         sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': s_str, 'user_id': me.id}}, upsert=True)
     asyncio.create_task(start_bot_instance(s_str, phone, 'stylized'))
     del LOGIN_STATES[message.chat.id]; await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
@@ -776,7 +842,7 @@ def home(): return "Bot is running..."
 
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
-    if sessions_collection:
+    if sessions_collection is not None:
         for doc in sessions_collection.find():
             asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
     await manager_bot.start(); await idle()

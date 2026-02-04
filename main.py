@@ -318,6 +318,7 @@ async def search_and_download_media(client, message, query, media_type='video'):
                         # but we can try scraping the visual result page or use a direct scraping endpoint if available.
                         # Using a simpler fallback: A generic scrape of top result page images
                         pass # DDG requires VQD token logic, sticking to Google broad regex or Bing is better.
+                    except: pass
                 
                 # Download Image
                 if found_link:

@@ -6,7 +6,7 @@ import aiohttp
 import time
 import json
 import random
-from urllib.parse import quote, unquote, urlparse, parse_qs
+from urllib.parse import quote, unquote, urlparse, parse_qs, urljoin
 from pyrogram import Client, filters, idle
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler, InlineQueryHandler
 from pyrogram.enums import ChatType, ChatAction
@@ -29,6 +29,15 @@ from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import certifi
 import pyrogram.utils 
+
+# --- Import Pornhub API (Try/Except to prevent crash if not installed) ---
+try:
+    from pornhub_api import PornhubApi
+    from pornhub_api.backends.aiohttp import AioHttpBackend
+    PH_INSTALLED = True
+except ImportError:
+    PH_INSTALLED = False
+    logging.warning("⚠️ کتابخانه PornhubApi نصب نیست. لطفاً نصب کنید: pip install pornhub-api")
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
@@ -58,10 +67,10 @@ patch_peer_id_validation()
 API_ID = 28190856
 API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 
-# 🔴🔴🔴 توکن ربات منیجر (جدید) 🔴🔴🔴
+# 🔴🔴🔴 توکن ربات منیجر 🔴🔴🔴
 BOT_TOKEN = "8349353893:AAE6n_bcK1GfDEoMlbyHcBS0A7EInD5-x8A"
 
-# --- Cloudflare AI Configuration (از فایل main.txt) ---
+# --- Cloudflare AI Configuration ---
 CLOUDFLARE_ACCOUNT_ID = "ce2e4697a5504848b6f18b15dda6eee9"
 CLOUDFLARE_API_TOKEN = "oG_r_b0Y-7exOWXcrg9MlLa1fPW9fkepcGU-DfhW"
 CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
@@ -70,7 +79,7 @@ CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct"
 MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
-learning_collection = None # برای یادگیری AI
+learning_collection = None 
 
 if MONGO_URI:
     try:
@@ -122,10 +131,10 @@ HELP_TEXT = """
 ━━━━━━━━━━━━━━━━━━━━
 ⚠️ تنظیمات اصلی (ساعت، فونت، منشی و...) فقط از طریق دستور **`پنل`** قابل دسترسی هستند.
 
-**✦ دانلودر و سرچ (بدون محدودیت 🔞)**
-  » `دانلود [متن]` (جستجوی پیشرفته ویدیو)
-  » `عکس [متن]` (جستجوی عکس با کیفیت بالا)
-  * مثال: `دانلود کالاف` یا `عکس طبیعت`.
+**✦ دانلودر و سرچ پیشرفته 🔞**
+  » `دانلود [متن]` (فقط از Pornhub)
+  » `عکس [متن]` (فقط از گوگل، بدون سانسور)
+  * مثال: `دانلود فیلم ایرانی` یا `عکس طبیعت`.
 
 **✦ هوش مصنوعی**
   » `منشی روشن` | `منشی خاموش` (پاسخگویی هوشمند)
@@ -273,17 +282,17 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
         logging.error(f"AI Error: {e}")
         return "فعلا در دسترس نیستم."
 
-# --- Google Search & Download Helper ---
+# --- Advanced Search & Download Helper ---
 async def search_and_download_media(client, message, query, media_type='video'):
     """
-    Advanced Search: 
-    1. Images: Google & DuckDuckGo (Unfiltered).
-    2. Videos: Index Of / Directory Listing Search (Unfiltered, No Size Limit).
+    1. Images: STRICTLY Google Images (safe=off). No DuckDuckGo.
+    2. Videos: STRICTLY Pornhub API -> Website Scraper. No other sources.
     """
-    status_msg = await message.reply_text(f"🔍 در حال جستجو (بدون محدودیت) برای: {query} ...")
+    status_msg = await message.reply_text(f"🔍 در حال جستجو برای: {query} ...")
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         }
         
         found_file_path = None
@@ -291,44 +300,31 @@ async def search_and_download_media(client, message, query, media_type='video'):
         
         async with aiohttp.ClientSession(headers=headers) as session:
             # ==========================================
-            # 🖼 IMAGE SEARCH 
+            # 🖼 IMAGE SEARCH (Google Only - Safe OFF)
             # ==========================================
             if media_type == 'image':
                 found_link = None
-                
-                # Strategy 1: Google Images (SafeSearch OFF)
                 try:
-                    search_url = f"https://www.google.com/search?q={quote(query)}&tbm=isch&safe=off&tbs=isz:l"
+                    # safe=off ensures NSFW content is included if found
+                    search_url = f"https://www.google.com/search?q={quote(query)}&tbm=isch&safe=off"
+                    
                     async with session.get(search_url, timeout=10) as resp:
                         if resp.status == 200:
                             html = await resp.text()
-                            matches = re.findall(r'(https?://[^"]+?\.(?:jpg|jpeg|png|webp))', html)
+                            
+                            # Regular expression to find image URLs in Google's raw HTML/JSON
+                            # This captures "http...jpg/png" inside JSON structures which Google uses for high-res images
+                            matches = re.findall(r'(https?://[^"]+?\.(?:jpg|jpeg|png))', html)
+                            
                             for link in matches:
-                                if 'gstatic.com' not in link and 'favicon' not in link and 'google' not in link:
+                                # Filter out thumbnails (gstatic) and favicons to get the real content
+                                if 'gstatic.com' not in link and 'favicon' not in link and 'google.com' not in link:
                                     found_link = link
                                     break
-                except Exception:
-                    pass
-
-                # Strategy 2: DuckDuckGo (Fallback, Uncensored)
-                if not found_link:
-                    try:
-                        # kp=-2 turns off safe search
-                        ddg_url = f"https://html.duckduckgo.com/html/?q={quote(query)}&kp=-2"
-                        async with session.get(ddg_url, timeout=10) as resp:
-                            if resp.status == 200:
-                                html = await resp.text()
-                                # Finds image-like links in results
-                                matches = re.findall(r'href=["\'](https?://[^"\']+?\.(?:jpg|jpeg|png))["\']', html)
-                                for link in matches:
-                                    link = unquote(link)
-                                    if 'duckduckgo' not in link:
-                                        found_link = link
-                                        break
-                    except Exception:
-                        pass
+                except Exception as e:
+                    logging.error(f"Google Img Error: {e}")
                 
-                # Download Image
+                # Download
                 if found_link:
                     try:
                         async with session.get(found_link, timeout=20) as img_resp:
@@ -343,91 +339,77 @@ async def search_and_download_media(client, message, query, media_type='video'):
                         logging.error(f"Img DL error: {e}")
 
             # ==========================================
-            # 🎥 VIDEO SEARCH (Index Of - No Limits)
+            # 🎥 VIDEO SEARCH (Pornhub ONLY)
             # ==========================================
             else:
-                # Use "Index of" search term to find open directories
-                search_query = f"intitle:\"index of\" {query} mp4"
-                # Using DuckDuckGo HTML which is easier to scrape without API keys
-                search_url = f"https://html.duckduckgo.com/html/?q={quote(search_query)}&kp=-2"
+                target_dl_url = None
                 
-                potential_links = []
-                
-                try:
-                    async with session.get(search_url, timeout=15) as resp:
-                        if resp.status == 200:
-                            html = await resp.text()
-                            # Extract links from DDG results
-                            raw_links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html)
-                            
-                            for link in raw_links:
-                                link = unquote(link)
-                                # Filter redirection links
-                                if "duckduckgo.com/l/?" in link:
-                                    try:
-                                        qs = parse_qs(urlparse(link).query)
-                                        if 'uddg' in qs: link = qs['uddg'][0]
-                                    except: continue
-                                
-                                # Skip search engines and ads
-                                if any(x in link for x in ["duckduckgo", "google", "adserver", "youtube.com"]): 
-                                    continue
-                                
-                                # If link ends in video format, it's a direct hit
-                                if link.lower().endswith(('.mp4', '.mkv', '.mov')):
-                                    potential_links.insert(0, link) # High priority
-                                else:
-                                    potential_links.append(link) # Might be a directory page
-                except Exception as e:
-                    logging.error(f"Video Search Error: {e}")
+                if not PH_INSTALLED:
+                    await status_msg.edit_text("❌ کتابخانه Pornhub API نصب نشده است.")
+                    return
 
-                # Process links
-                for url in potential_links[:5]: # Check top 5
+                try:
+                    # 1. Search via API
+                    async with AioHttpBackend() as backend:
+                        api = PornhubApi(backend=backend)
+                        results = await api.search.search_videos(q=query, ordering="mostviewed")
+                        
+                        if results:
+                            # 2. Get the first video page URL
+                            for vid in results:
+                                page_link = f"https://www.pornhub.com/view_video.php?viewkey={vid.video_id}"
+                                await status_msg.edit_text(f"🔞 ویدیو یافت شد: {vid.title}\nدر حال استخراج لینک دانلود...")
+                                
+                                # 3. Scrape the page to find the actual MP4 file
+                                # Pornhub stores media definitions in JS variables
+                                async with session.get(page_link, timeout=15) as page_resp:
+                                    if page_resp.status == 200:
+                                        page_html = await page_resp.text()
+                                        
+                                        # Look for mediaDefinitions or direct mp4 links
+                                        # Regex to find 'videoUrl":"https://..."'
+                                        urls = re.findall(r'"videoUrl":"(https?://[^"]+)"', page_html)
+                                        
+                                        # Iterate to find a valid one (cleaning escapes)
+                                        for u in urls:
+                                            clean_url = u.replace('\\/', '/')
+                                            if '.mp4' in clean_url and 'master.m3u8' not in clean_url:
+                                                target_dl_url = clean_url
+                                                break # Found valid MP4
+                                        
+                                        # Fallback regex if variable names changed
+                                        if not target_dl_url:
+                                            direct_mp4s = re.findall(r'(https?://[^"\'\s]+\.mp4(?:\?[^"\'\s]*)?)', page_html)
+                                            if direct_mp4s:
+                                                target_dl_url = direct_mp4s[0]
+                                                
+                                break # Stop after processing first result
+                except Exception as e:
+                    logging.error(f"PH Search/Scrape Err: {e}")
+
+                # 4. Download Logic
+                if target_dl_url:
+                    await status_msg.edit_text(f"⬇️ شروع دانلود از Pornhub...")
+                    
+                    filename = f"download_{int(time.time())}.mp4"
+                    
                     try:
-                        target_dl_url = None
+                        # Use custom headers to mimic browser
+                        dl_headers = headers.copy()
+                        dl_headers['Referer'] = 'https://www.pornhub.com/'
                         
-                        # Case A: It's a direct file
-                        if url.lower().endswith(('.mp4', '.mkv', '.mov')):
-                            target_dl_url = url
-                        
-                        # Case B: It's a directory page, scan it for files
-                        else:
-                            async with session.get(url, timeout=10) as page_resp:
-                                if page_resp.status == 200:
-                                    page_html = await page_resp.text()
-                                    # Find .mp4 links in the page
-                                    vid_matches = re.findall(r'href=["\']([^"\']+\.mp4)["\']', page_html, re.IGNORECASE)
-                                    if vid_matches:
-                                        # Construct full URL
-                                        vid_file = vid_matches[0]
-                                        if not vid_file.startswith('http'):
-                                            from urllib.parse import urljoin
-                                            target_dl_url = urljoin(url, vid_file)
-                                        else:
-                                            target_dl_url = vid_file
-                        
-                        if target_dl_url:
-                            await status_msg.edit_text(f"⬇️ فایل پیدا شد. شروع دانلود... \n🔗 {target_dl_url}")
-                            
-                            filename = f"download_{int(time.time())}.mp4"
-                            
-                            # Stream Download (No Size Limit Logic Check)
-                            async with session.get(target_dl_url, timeout=600) as dl_resp: # 10 min timeout
-                                if dl_resp.status == 200:
-                                    with open(filename, 'wb') as f:
-                                        async for chunk in dl_resp.content.iter_chunked(1024 * 1024): # 1MB chunks
-                                            f.write(chunk)
-                                    
-                                    # Check if file is not empty
-                                    if os.path.exists(filename) and os.path.getsize(filename) > 1024:
-                                        found_file_path = filename
-                                        found_extension = "mp4"
-                                        break # Success
-                                    else:
-                                        if os.path.exists(filename): os.remove(filename)
+                        async with session.get(target_dl_url, headers=dl_headers, timeout=1200) as dl_resp: # 20 min timeout
+                            if dl_resp.status == 200:
+                                with open(filename, 'wb') as f:
+                                    async for chunk in dl_resp.content.iter_chunked(1024 * 1024):
+                                        f.write(chunk)
+                                
+                                if os.path.exists(filename) and os.path.getsize(filename) > 1024:
+                                    found_file_path = filename
+                                    found_extension = "mp4"
                     except Exception as e:
-                        logging.error(f"DL Attempt failed: {e}")
-                        continue
+                        logging.error(f"PH Download Fail: {e}")
+                        if os.path.exists(filename): os.remove(filename)
 
         # ==========================================
         # 📤 UPLOAD
@@ -435,7 +417,6 @@ async def search_and_download_media(client, message, query, media_type='video'):
         if found_file_path:
             await status_msg.edit_text("📤 در حال آپلود...")
             try:
-                # Use a larger timeout for upload
                 if media_type == 'video':
                     await client.send_video(message.chat.id, found_file_path, caption=f"✅ {query}", reply_to_message_id=message.id)
                 else:
@@ -446,11 +427,11 @@ async def search_and_download_media(client, message, query, media_type='video'):
                 if os.path.exists(found_file_path): os.remove(found_file_path)
                 await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ متاسفانه فایل مستقیمی پیدا نشد. لطفاً عنوان دقیق‌تری را جستجو کنید.")
+            await status_msg.edit_text("❌ نتیجه‌ای یافت نشد.")
 
     except Exception as e:
         logging.error(f"Search Handler Error: {e}")
-        try: await status_msg.edit_text(f"❌ خطای کلی: {e}")
+        try: await status_msg.edit_text(f"❌ خطا: {e}")
         except: pass
 
 # --- Helpers ---
@@ -580,11 +561,6 @@ async def enemy_handler(client, message):
     except: pass
 
 async def secretary_auto_reply_handler(client, message):
-    """
-    هندلر منشی:
-    1. اگر AI فعال باشد، پاسخ هوشمند می‌دهد.
-    2. اگر AI خاموش ولی منشی ساده روشن باشد، پیام پیشفرض می‌دهد.
-    """
     owner_id = client.me.id
     ai_enabled = AI_SECRETARY_STATUS.get(owner_id, False)
     simple_enabled = SECRETARY_MODE_STATUS.get(owner_id, False)
@@ -594,7 +570,6 @@ async def secretary_auto_reply_handler(client, message):
     
     sender_id = message.from_user.id
     
-    # AI Logic
     if ai_enabled:
         user_msg = message.text or "[رسانه]"
         sender_name = message.from_user.first_name or "کاربر"
@@ -603,7 +578,6 @@ async def secretary_auto_reply_handler(client, message):
         except: pass
         return
 
-    # Simple Logic (Once per user)
     replied = USERS_REPLIED_IN_SECRETARY.get(owner_id, set())
     if sender_id not in replied:
         try:
@@ -616,13 +590,11 @@ async def incoming_message_manager(client, message):
     if not message.from_user: return
     user_id = client.me.id
     
-    # Mute
     if (message.from_user.id, message.chat.id) in MUTED_USERS.get(user_id, set()):
         try: await message.delete()
         except: pass
         return
 
-    # Auto Reaction
     if emoji := AUTO_REACTION_TARGETS.get(user_id, {}).get(message.from_user.id):
         try: await client.send_reaction(message.chat.id, message.id, emoji)
         except: pass
@@ -658,11 +630,6 @@ async def photo_setting_controller(client, message):
         await message.edit_text("🗑 عکس پنل حذف شد.")
 
 async def search_media_controller(client, message):
-    """
-    Handler for:
-    - دانلود [query] (Searches video)
-    - عکس [query] (Searches image)
-    """
     cmd = message.text.strip()
     
     if cmd.startswith("دانلود "):
@@ -679,7 +646,6 @@ async def reply_based_controller(client, message):
     user_id = client.me.id
     cmd = message.text
     
-    # Save settings helper
     async def save(): await save_settings_to_db(user_id)
 
     if cmd == "تاس": await client.send_dice(message.chat.id, "🎲")
@@ -778,10 +744,8 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     if user_id in ACTIVE_BOTS:
         for t in ACTIVE_BOTS[user_id][1]: t.cancel()
     
-    # Load Settings from DB
     await load_user_settings_from_db(user_id)
     
-    # Apply runtime settings if not loaded from DB
     if user_id not in USER_FONT_CHOICES: USER_FONT_CHOICES[user_id] = font_style
     if user_id not in CLOCK_STATUS: CLOCK_STATUS[user_id] = not disable_clock
     
@@ -792,7 +756,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     client.add_handler(MessageHandler(help_controller, filters.me & filters.regex("^راهنما$")))
     client.add_handler(MessageHandler(panel_command_controller, filters.me & filters.regex(r"^(پنل|panel)$")))
     client.add_handler(MessageHandler(photo_setting_controller, filters.me & filters.regex(r"^(تنظیم عکس|حذف عکس)$")))
-    client.add_handler(MessageHandler(search_media_controller, filters.me & filters.regex(r"^(دانلود .*|عکس .*)$"))) # New Handler
+    client.add_handler(MessageHandler(search_media_controller, filters.me & filters.regex(r"^(دانلود .*|عکس .*)$"))) 
     client.add_handler(MessageHandler(reply_based_controller, filters.me)) 
     client.add_handler(MessageHandler(enemy_handler, filters.create(lambda _, c, m: (m.from_user.id, m.chat.id) in ACTIVE_ENEMIES.get(c.me.id, set()) or GLOBAL_ENEMY_STATUS.get(c.me.id)) & ~filters.me), group=1)
     client.add_handler(MessageHandler(secretary_auto_reply_handler, filters.private & ~filters.me), group=1)
@@ -866,7 +830,6 @@ async def callback_panel_handler(client, callback):
     if callback.from_user.id != target_user_id:
         await callback.answer("⛔️ دسترسی غیرمجاز!", show_alert=True); return
 
-    # Helper to save DB on toggle
     async def save(): await save_settings_to_db(target_user_id)
 
     if action == "toggle_clock":

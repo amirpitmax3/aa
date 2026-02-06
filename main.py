@@ -13,6 +13,10 @@ from pyrogram.handlers import MessageHandler, RawUpdateHandler
 # MessageReactionUpdatedHandler not available in this Pyrogram version
 MessageReactionUpdatedHandler = None  # Define as None to avoid NameError
 from pyrogram.enums import ChatType, ChatAction, UserStatus, ChatMembersFilter
+try:
+    from pyrogram.types import MessageEntityBlockquote
+except Exception:
+    MessageEntityBlockquote = None
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
     PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, UserDeactivated, AuthKeyUnregistered,
@@ -195,6 +199,7 @@ MUTED_USERS = {}    # {user_id: set of (sender_id, chat_id)}
 USER_FONT_CHOICES = {}
 CLOCK_STATUS = {}
 BOLD_MODE_STATUS = {}
+QUOTE_MODE_STATUS = {}
 AUTO_SEEN_STATUS = {}
 AUTO_REACTION_TARGETS = {}  # {user_id: {target_user_id: emoji}}
 AUTO_TRANSLATE_TARGET = {}  # {user_id: lang_code}
@@ -637,6 +642,18 @@ async def get_learned_response_suggestions(user_id: int, user_message: str, send
 async def get_ai_response(user_message: str, user_name: str = "کاربر", user_id: int = None, sender_id: int = None) -> str:
     """Get AI response from Cloudflare Workers AI"""
     try:
+        # Hard guard: handle insults with firm boundary-setting response (no profanity)
+        try:
+            msg_l = (user_message or "").lower()
+            insult_keywords = [
+                "کیر", "کس", "کص", "کونی", "حروم", "جنده", "مادر", "ناموس", "fuck", "fuk", "f*", "shit", "bitch",
+                "بی ناموس", "بی‌شرف", "بی شرف", "کثافت", "فلان فلان", "فحش"
+            ]
+            if any(k in msg_l for k in insult_keywords):
+                return "با احترام حرف بزن. اگه قصد گفتگو داری محترمانه بگو."
+        except Exception:
+            pass
+
         url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_AI_MODEL}"
         
         headers = {
@@ -694,9 +711,10 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
 اسم شخص: {user_name}
 
 قوانین مهم:
-- فقط یک جمله کوتاه بنویس
+- حداکثر دو جمله کوتاه بنویس
 - متن رو خوب بفهم و مناسب جواب بده
-- اگه واقعاً نفهمیدی بگو: "چی گفتی؟"
+- هیچ وقت نگو "چی گفتی" یا "منظورت چی بود" یا سوال پرسیدن برای روشن شدن
+- حتی اگر مبهم بود، بهترین برداشت ممکن رو انجام بده و مستقیم جواب بده
 - اگه پرسید امیر کجاست: "نمیدونم کجاست"
 - مثل آدم باهوش فکر کن و جواب بده"""
         else:
@@ -711,10 +729,11 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
 {context}
 
 قوانین مهم:
-- فقط یک جمله کوتاه بگو
+- حداکثر دو جمله کوتاه بگو
 - متن رو خوب بفهم و مناسب جواب بده
 - به زمینه مکالمه توجه کن و مرتبط جواب بده
-- اگه واقعاً نفهمیدی بگو: "چی گفتی؟"
+- هیچ وقت نگو "چی گفتی" یا "منظورت چی بود" یا سوال پرسیدن برای روشن شدن
+- حتی اگر مبهم بود، بهترین برداشت ممکن رو انجام بده و مستقیم جواب بده
 - اگه عصبانی باشه بگو: "چی شده؟"
 - اگه پرسید امیر کجاست: "نمیدونم کجاست"
 - مثل آدم باهوش فکر کن و جواب بده
@@ -751,11 +770,10 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
                                 # Response is repetitive, use smart fallback
                                 import random
                                 smart_fallbacks = [
-                                    f"چی گفتی {user_name}؟",
-                                    "منظورت رو نفهمیدم",
-                                    "یعنی چی؟",
-                                    "توضیح بیشتر بده",
-                                    "بهتر توضیح کن"
+                                    f"باشه {user_name}.",
+                                    "باشه.",
+                                    "متوجه شدم.",
+                                    "اوکی."
                                 ]
                                 ai_response = random.choice(smart_fallbacks)
                             
@@ -1416,7 +1434,7 @@ async def translate_text(text: str, target_lang: str = "fa") -> str:
 async def outgoing_message_modifier(client, message):
     """Modify outgoing messages for bold and auto-translation"""
     user_id = client.me.id
-    if not message.text or message.text.startswith("/") or message.entities:
+    if not message.text or message.text.startswith("/"):
         return
 
     # Skip commands
@@ -1426,6 +1444,26 @@ async def outgoing_message_modifier(client, message):
     original_text = message.text
     modified_text = original_text
     needs_edit = False
+    edit_entities = None
+
+    # Quote mode:
+    # Prefer native blockquote entity (no visible ">" characters in text).
+    # Fallback to "> " prefix when entity isn't supported by this Pyrogram version.
+    if QUOTE_MODE_STATUS.get(user_id, False):
+        try:
+            t = (modified_text or "").strip("\n")
+            if t:
+                if MessageEntityBlockquote is not None:
+                    edit_entities = [MessageEntityBlockquote(offset=0, length=len(t))]
+                    modified_text = t
+                    needs_edit = True
+                else:
+                    if not t.lstrip().startswith(">"):
+                        lines = t.splitlines() or [t]
+                        modified_text = "\n".join([f"> {ln}" if ln.strip() else ">" for ln in lines])
+                        needs_edit = True
+        except Exception as e_quote:
+            logging.warning(f"Outgoing Modifier: Quote mode failed for msg {getattr(message,'id',None)} user {user_id}: {e_quote}")
 
     # Auto translation (using Google Translate API like original)
     target_lang = AUTO_TRANSLATE_TARGET.get(user_id)
@@ -1451,7 +1489,7 @@ async def outgoing_message_modifier(client, message):
     # Apply modifications
     if needs_edit and modified_text != original_text:
         try:
-            await message.edit_text(modified_text, disable_web_page_preview=True)
+            await message.edit_text(modified_text, entities=edit_entities, disable_web_page_preview=True)
         except FloodWait as e:
              logging.warning(f"Outgoing Modifier: Flood wait editing msg {message.id} for user {user_id}: {e.value}s")
              await asyncio.sleep(e.value + 1)
@@ -1824,22 +1862,37 @@ async def copy_profile_controller(client, message):
     # Check if command requires reply
     requires_reply = command == "کپی روشن"
 
-    if requires_reply and (not message.reply_to_message or not message.reply_to_message.from_user):
+    async def _send_ephemeral_status(text: str):
         try:
-            await message.edit_text("⚠️ برای کپی پروفایل، باید روی پیام کاربر مورد نظر ریپلای کنید.")
-        except Exception: pass
+            m = await client.send_message(message.chat.id, text)
+            try:
+                await m.delete()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    if requires_reply and (not message.reply_to_message or not message.reply_to_message.from_user):
         return
 
     try:
         if command == "کپی خاموش":
             if not COPY_MODE_STATUS.get(user_id, False):
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
                 return
 
-            original = ORIGINAL_PROFILE_DATA.pop(user_id, None) # Use pop with None default
+            original = ORIGINAL_PROFILE_DATA.get(user_id)  # keep until restore succeeds
+            if not original:
+                # No backup available; at least disable copy mode and persist.
+                COPY_MODE_STATUS[user_id] = False
+                await save_settings_to_db(user_id)
+                await _send_ephemeral_status("خاموش شد")
+                return
+
             if original:
                 # Restore profile info
                 try:
@@ -1860,20 +1913,39 @@ async def copy_profile_controller(client, message):
                     logging.warning(f"Copy Profile (Apply): Could not delete existing photos for user {user_id}: {e_del_apply}")
 
                 # Restore original photo if it existed
-                original_photo_data = original.get('photo')
-                if original_photo_data:
-                    try:
-                        await client.set_profile_photo(photo=original_photo_data)
-                    except Exception as e_set_target_photo:
-                         logging.warning(f"Copy Profile (Apply): Could not set target photo for user {user_id}: {e_set_target_photo}")
-                # else: target had no photo or download failed
+                original_photo_paths = original.get('photo_paths') or []
+                if original_photo_paths:
+                    for path in reversed(original_photo_paths[:5]):
+                        if not path:
+                            continue
+                        try:
+                            if os.path.exists(path):
+                                await client.set_profile_photo(photo=path)
+                        except Exception as e_set_original_photo:
+                            logging.warning(f"Copy Profile (Restore): Could not set original photo for user {user_id}: {e_set_original_photo}")
+                        finally:
+                            try:
+                                if os.path.exists(path):
+                                    os.remove(path)
+                            except Exception:
+                                pass
+                else:
+                    original_photo_data = original.get('photo')
+                    if original_photo_data:
+                        try:
+                            await client.set_profile_photo(photo=original_photo_data)
+                        except Exception as e_set_target_photo:
+                             logging.warning(f"Copy Profile (Restore): Could not set original photo for user {user_id}: {e_set_target_photo}")
+
+                # Restore complete, now drop backup
+                try:
+                    ORIGINAL_PROFILE_DATA.pop(user_id, None)
+                except Exception:
+                    pass
 
             COPY_MODE_STATUS[user_id] = False
             await save_settings_to_db(user_id)
-            try:
-                await message.delete()
-            except Exception:
-                pass
+            await _send_ephemeral_status("خاموش شد")
             return
 
         # Logic for "کپی روشن" (requires_reply was checked earlier)
@@ -1901,12 +1973,29 @@ async def copy_profile_controller(client, message):
                 except Exception as e_download_me:
                      logging.warning(f"Copy Profile (Backup): Could not download own photo for user {user_id}: {e_download_me}")
 
+            original_photo_paths = []
+            try:
+                count = 0
+                async for photo in client.get_chat_photos("me"):
+                    if count >= 5:
+                        break
+                    try:
+                        path = await client.download_media(photo.file_id, file_name=f"original_{user_id}_{photo.file_id}.jpg")
+                        if path:
+                            original_photo_paths.append(path)
+                            count += 1
+                    except Exception as e_download_original_photo:
+                        logging.warning(f"Copy Profile (Backup): Could not download original photo for user {user_id}: {e_download_original_photo}")
+            except Exception as e_iter_original_photos:
+                logging.warning(f"Copy Profile (Backup): Could not iterate original photos for user {user_id}: {e_iter_original_photos}")
+
             # Store backup including clock/bio settings
             ORIGINAL_PROFILE_DATA[user_id] = {
                 'first_name': me.first_name or '',
                 'last_name': me.last_name or '',
                 'bio': me_bio,
                 'photo': me_photo_bytes, # Store bytes or None
+                'photo_paths': original_photo_paths,
                 'clock_in_bio': CLOCK_IN_BIO_STATUS.get(user_id, False),
                 'date_in_bio': DATE_IN_BIO_STATUS.get(user_id, False),
                 'clock_font': BIO_CLOCK_FONT_CHOICE.get(user_id, 1),
@@ -1946,24 +2035,50 @@ async def copy_profile_controller(client, message):
             except Exception as e_del_apply:
                 logging.warning(f"Copy Profile (Apply): Could not delete existing photos for user {user_id}: {e_del_apply}")
 
-            # Set target photo if available
-            if target_photo_bytes:
+            # Set up to last 5 target photos
+            target_photo_paths = []
+            try:
+                count = 0
+                async for photo in client.get_chat_photos(target_id):
+                    if count >= 5:
+                        break
+                    try:
+                        path = await client.download_media(photo.file_id, file_name=f"target_{user_id}_{target_id}_{photo.file_id}.jpg")
+                        if path:
+                            target_photo_paths.append(path)
+                            count += 1
+                    except Exception as e_download_target_photo:
+                        logging.warning(f"Copy Profile (Target): Could not download target photo for user {target_id}: {e_download_target_photo}")
+            except Exception as e_iter_target_photos:
+                logging.warning(f"Copy Profile (Target): Could not iterate target photos for user {target_id}: {e_iter_target_photos}")
+
+            if target_photo_paths:
+                for path in reversed(target_photo_paths[:5]):
+                    if not path:
+                        continue
+                    try:
+                        if os.path.exists(path):
+                            await client.set_profile_photo(photo=path)
+                    except Exception as e_set_target_photo:
+                        logging.warning(f"Copy Profile (Apply): Could not set target photo for user {user_id}: {e_set_target_photo}")
+                    finally:
+                        try:
+                            if os.path.exists(path):
+                                os.remove(path)
+                        except Exception:
+                            pass
+            elif target_photo_bytes:
                 try:
                     await client.set_profile_photo(photo=target_photo_bytes)
                 except Exception as e_set_target_photo:
                      logging.warning(f"Copy Profile (Apply): Could not set target photo for user {user_id}: {e_set_target_photo}")
-            # else: target had no photo or download failed
 
             COPY_MODE_STATUS[user_id] = True
             await save_settings_to_db(user_id)
+            await _send_ephemeral_status("فعال شد")
     except Exception as e:
         logging.error(f"Copy Profile Controller: Error for user {user_id} processing command '{command}': {e}", exc_info=True)
-        try:
-            # Provide more specific error if possible
-            error_text = f"⚠️ خطایی در عملیات کپی پروفایل رخ داد: {type(e).__name__}"
-            await message.edit_text(error_text)
-        except Exception:
-            pass # Avoid error loops
+        return
 
 async def set_enemy_controller(client, message):
     user_id = client.me.id
@@ -2225,6 +2340,7 @@ async def help_controller(client, message):
 ┃ 🔹 `کد روشن/خاموش` ➜ فرمت کد
 ┃ 🔸 `اسپویلر روشن/خاموش` ➜ اسپویلر
 ┃ 🔹 `منشن روشن/خاموش` ➜ منشن (نیاز به ریپلای)
+┃ 🔸 `نقل و قول روشن/خاموش` ➜ اگر ریپلای کنی: نقل‌قول خود تلگرام | اگر نه: ❝ متن ❞
 ┃ 🔸 `هشتگ روشن/خاموش` ➜ هشتگ
 ┃ 🔹 `معکوس روشن/خاموش` ➜ متن معکوس
 ┃ 🔸 `تدریجی روشن/خاموش` ➜ نمایش تدریجی
@@ -3330,6 +3446,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         CUSTOM_SECRETARY_MESSAGES.setdefault(user_id, DEFAULT_SECRETARY_MESSAGE)
         USERS_REPLIED_IN_SECRETARY.setdefault(user_id, set())
         BOLD_MODE_STATUS.setdefault(user_id, False)
+        QUOTE_MODE_STATUS.setdefault(user_id, False)
         AUTO_SEEN_STATUS.setdefault(user_id, False)
         AUTO_REACTION_TARGETS.setdefault(user_id, {})
         AUTO_TRANSLATE_TARGET.setdefault(user_id, None)
@@ -3419,7 +3536,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
             logging.warning("DEBUG: could not register debug_pv_outgoing_logger err=%s", e_reg_dbg)
         
         client.add_handler(MessageHandler(help_controller, cmd_filters & filters.regex("^راهنما$")), group=0)
-        client.add_handler(MessageHandler(toggle_controller, cmd_filters & filters.regex(r"^(بولد روشن|بولد خاموش|سین روشن|سین خاموش|منشی روشن|منشی خاموش|منشی خودکار روشن|منشی خودکار خاموش|تست ai|وضعیت یادگیری|بکاپ یادگیری|پاکسازی یادگیری|انتی لوگین روشن|انتی لوگین خاموش|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|ضبط ویس روشن|ضبط ویس خاموش|عکس روشن|عکس خاموش|گیف روشن|گیف خاموش|دشمن روشن|دشمن خاموش|دوست روشن|دوست خاموش)$")))
+        client.add_handler(MessageHandler(toggle_controller, cmd_filters & filters.regex(r"^(بولد روشن|بولد خاموش|نقل و قول روشن|نقل و قول خاموش|سین روشن|سین خاموش|منشی روشن|منشی خاموش|منشی خودکار روشن|منشی خودکار خاموش|تست ai|وضعیت یادگیری|بکاپ یادگیری|پاکسازی یادگیری|انتی لوگین روشن|انتی لوگین خاموش|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|ضبط ویس روشن|ضبط ویس خاموش|عکس روشن|عکس خاموش|گیف روشن|گیف خاموش|دشمن روشن|دشمن خاموش|دوست روشن|دوست خاموش)$")))
         client.add_handler(MessageHandler(translate_controller, cmd_filters & filters.reply & filters.regex(r"^ترجمه$"))) # Translate command requires reply
         client.add_handler(MessageHandler(set_translation_controller, cmd_filters & filters.regex(r"^(ترجمه [a-z]{2}(?:-[a-z]{2})?|ترجمه خاموش|چینی روشن|چینی خاموش|روسی روشن|روسی خاموش|انگلیسی روشن|انگلیسی خاموش)$", flags=re.IGNORECASE)))
         client.add_handler(MessageHandler(set_secretary_message_controller, cmd_filters & filters.regex(r"^منشی متن(?: |$)(.*)", flags=re.DOTALL | re.IGNORECASE)))
@@ -4002,6 +4119,14 @@ async def toggle_controller(client, message):
             BOLD_MODE_STATUS[user_id] = False
             await save_settings_to_db(user_id)
             await message.edit_text("❌ حالت بولد غیرفعال شد")
+        elif command == "نقل و قول روشن":
+            QUOTE_MODE_STATUS[user_id] = True
+            await save_settings_to_db(user_id)
+            await message.edit_text("✅ نقل و قول فعال شد")
+        elif command == "نقل و قول خاموش":
+            QUOTE_MODE_STATUS[user_id] = False
+            await save_settings_to_db(user_id)
+            await message.edit_text("❌ نقل و قول غیرفعال شد")
         elif command == "سین روشن":
             AUTO_SEEN_STATUS[user_id] = True
             await save_settings_to_db(user_id)
@@ -4021,6 +4146,11 @@ async def toggle_controller(client, message):
         elif command == "منشی خودکار روشن":
             AI_SECRETARY_STATUS[user_id] = True
             await save_settings_to_db(user_id)
+            try:
+                # Reset regular secretary one-time replied state when switching to AI mode
+                USERS_REPLIED_IN_SECRETARY[user_id] = set()
+            except Exception:
+                pass
             await message.edit_text("✅ منشی خودکار (AI) فعال شد")
         elif command == "منشی خودکار خاموش":
             AI_SECRETARY_STATUS[user_id] = False
@@ -4834,7 +4964,32 @@ async def secretary_auto_reply_handler(client, message):
     
     sender_id = message.from_user.id
     sender_name = message.from_user.first_name or "دوست"
-    user_message = message.text or message.caption or ""
+
+    # Build a text description for any message type (text/media/sticker/etc.)
+    user_message = (message.text or message.caption or "").strip()
+    if not user_message:
+        if getattr(message, "sticker", None):
+            user_message = "[استیکر]"
+        elif getattr(message, "voice", None):
+            user_message = "[ویس]"
+        elif getattr(message, "audio", None):
+            user_message = "[موزیک]"
+        elif getattr(message, "video", None):
+            user_message = "[ویدیو]"
+        elif getattr(message, "video_note", None):
+            user_message = "[ویدیو نوت]"
+        elif getattr(message, "photo", None):
+            user_message = "[عکس]"
+        elif getattr(message, "animation", None):
+            user_message = "[گیف]"
+        elif getattr(message, "document", None):
+            user_message = "[فایل]"
+        elif getattr(message, "contact", None):
+            user_message = "[کانتکت]"
+        elif getattr(message, "location", None):
+            user_message = "[لوکیشن]"
+        else:
+            user_message = "[پیام]"
     
     try:
         # AI Secretary Mode - reply to EVERY message like a real person

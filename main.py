@@ -57,7 +57,7 @@ def patch_peer_id_validation():
 
 patch_peer_id_validation()
 
-# 🔴 تنظیمات اصلی وارد شده
+# 🔴 تنظیمات اصلی
 BOT_TOKEN = "8340821170:AAGrJSp-fqDituAOTq7N3CTt0YBZKnfFJ3k"
 OWNER_ID = 7423552124
 MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
@@ -654,6 +654,54 @@ async def billing_loop(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Error in billing loop: {e}")
 
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_doc = await get_user_async(user.id)
+    user_doc['username'] = user.username
+    user_doc['first_name'] = user.first_name
+    
+    if update.effective_chat.type != 'private':
+        await update.message.reply_text("👋 ربات شرط‌بندی فعال است.", reply_markup=bet_group_keyboard)
+        return
+
+    if user_doc.get('is_owner'):
+        total_users = len(GLOBAL_USERS)
+        active_selfs = len(ACTIVE_BOTS)
+        text = (f"👑 سلام مالک عزیز، به پنل مدیریت خوش آمدید!\n"
+                f"👥 کاربران: {total_users:,}\n"
+                f"🤖 سلف‌های فعال: {active_selfs}")
+        await update.message.reply_text(text, reply_markup=get_main_keyboard(user_doc))
+    else:
+        if context.args:
+            try:
+                referrer_id = int(context.args[0])
+                if referrer_id != user.id and not user_doc.get('referred_by'):
+                    GLOBAL_USERS[user.id]['referred_by'] = referrer_id
+                    reward = int(GLOBAL_SETTINGS.get('referral_reward', '5'))
+                    referrer_doc = await get_user_async(referrer_id)
+                    referrer_doc['balance'] += reward
+                    save_user_immediate(referrer_id)
+                    await context.bot.send_message(referrer_id, f"🎁 {reward} الماس پاداش دعوت دریافت کردید!")
+            except: pass
+        
+        await update.message.reply_text("👋 به 𝐃𝐀𝐑𝐊𝐒𝐄𝐋𝐅 خوش آمدید.", reply_markup=get_main_keyboard(user_doc))
+
+async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_doc = await get_user_async(update.effective_user.id)
+    price = int(GLOBAL_SETTINGS.get('credit_price', '1000'))
+    balance = user_doc.get('balance', 0)
+    await update.message.reply_text(
+        f"💰 موجودی الماس شما: **{balance:,}** الماس\n"
+        f"💳 معادل: `{balance * price:,}` تومان",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def get_referral_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot_username = (await context.bot.get_me()).username
+    link = f"https://t.me/{bot_username}?start={update.effective_user.id}"
+    reward = GLOBAL_SETTINGS.get('referral_reward', '5')
+    await update.message.reply_text(f"🎁 لینک دعوت شما:\n`{link}`\nپاداش: {reward} الماس", parse_mode=ParseMode.MARKDOWN)
+
 async def self_activation_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_doc = await get_user_async(user.id)
@@ -871,14 +919,52 @@ async def process_admin_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     return ADMIN_MENU
 
 async def process_simple_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    state_map = {
-        AWAIT_ADMIN_SET_CARD_NUMBER: 'card_number',
-        AWAIT_ADMIN_SET_CARD_HOLDER: 'card_holder',
-        AWAIT_ADMIN_CREDIT_PRICE: 'credit_price',
-        AWAIT_ADMIN_REFERRAL_PRICE: 'referral_reward',
-        AWAIT_ADMIN_TAX: 'bet_tax_rate'
-    }
+    text = update.message.text
+    choice = context.user_data.get('admin_choice')
+    
+    if choice == "💳 تنظیم کارت واریز":
+        await set_setting_async('card_number', text)
+        await update.message.reply_text("✅ شماره کارت تنظیم شد.", reply_markup=admin_keyboard)
+    elif choice == "👤 تنظیم صاحب کارت":
+        await set_setting_async('card_holder', text)
+        await update.message.reply_text("✅ صاحب کارت تنظیم شد.", reply_markup=admin_keyboard)
+    elif choice == "➕ افزودن کانال":
+        # Simplified for now
+        await set_setting_async(f'channel_{text}', text)
+        await update.message.reply_text("✅ کانال افزوده شد.", reply_markup=admin_keyboard)
+    elif choice == "💲 قیمت الماس":
+        await set_setting_async('credit_price', text)
+        await update.message.reply_text("✅ قیمت الماس تنظیم شد.", reply_markup=admin_keyboard)
+    elif choice == "🎁 پاداش دعوت":
+        await set_setting_async('referral_reward', text)
+        await update.message.reply_text("✅ پاداش دعوت تنظیم شد.", reply_markup=admin_keyboard)
+    elif choice == "📉 درصد مالیات":
+        await set_setting_async('bet_tax_rate', text)
+        await update.message.reply_text("✅ درصد مالیات تنظیم شد.", reply_markup=admin_keyboard)
+    
     return ADMIN_MENU
+
+async def process_admin_self_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        cost = int(update.message.text.strip())
+        if cost < 0: raise ValueError
+        await set_setting_async('self_hourly_cost', str(cost))
+        await update.message.reply_text(f"✅ هزینه ساعتی سلف روی {cost} الماس تنظیم شد.", reply_markup=admin_keyboard)
+        return ADMIN_MENU
+    except:
+        await update.message.reply_text("❌ عدد نامعتبر. دوباره وارد کنید:")
+        return AWAIT_ADMIN_SELF_COST
+
+async def process_admin_self_min_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        val = int(update.message.text.strip())
+        if val < 0: raise ValueError
+        await set_setting_async('self_min_balance', str(val))
+        await update.message.reply_text(f"✅ حداقل موجودی برای فعال‌سازی روی {val} الماس تنظیم شد.", reply_markup=admin_keyboard)
+        return ADMIN_MENU
+    except:
+        await update.message.reply_text("❌ عدد نامعتبر. دوباره وارد کنید:")
+        return AWAIT_ADMIN_SELF_MIN_BALANCE
 
 async def process_admin_panel_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
@@ -920,6 +1006,68 @@ async def process_admin_broadcast(update: Update, context: ContextTypes.DEFAULT_
         except: pass
     await update.message.reply_text("✅ ارسال شد.", reply_markup=admin_keyboard)
     return ADMIN_MENU
+
+async def deposit_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("تعداد الماس مورد نظر را وارد کنید:", reply_markup=ReplyKeyboardRemove())
+    return AWAIT_DEPOSIT_AMOUNT
+
+async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        amount = int(update.message.text)
+        if amount <= 0: raise ValueError
+        price = int(GLOBAL_SETTINGS.get('credit_price', '1000'))
+        context.user_data['deposit_amount'] = amount
+        card = GLOBAL_SETTINGS.get('card_number', 'تنظیم نشده')
+        holder = GLOBAL_SETTINGS.get('card_holder', 'تنظیم نشده')
+        await update.message.reply_text(
+            f"مبلغ: {amount * price:,} تومان\nشماره کارت: `{card}`\nصاحب: `{holder}`\nلطفا عکس رسید را ارسال کنید.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return AWAIT_DEPOSIT_RECEIPT
+    except:
+        await update.message.reply_text("❌ عدد نامعتبر.")
+        return AWAIT_DEPOSIT_AMOUNT
+
+async def process_deposit_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global TX_ID_COUNTER
+    if not update.message.photo: return AWAIT_DEPOSIT_RECEIPT
+    user = update.effective_user
+    amount = context.user_data['deposit_amount']
+    tx_id = TX_ID_COUNTER; TX_ID_COUNTER += 1
+    
+    GLOBAL_TRANSACTIONS[tx_id] = {
+        'tx_id': tx_id, 'user_id': user.id, 'amount': amount, 'status': 'pending',
+        'timestamp': datetime.now(timezone.utc), 'admin_messages': []
+    }
+    
+    caption = f"🧾 درخواست شارژ (ID: {tx_id})\nکاربر: {user.id}\nالماس: {amount}"
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("✅ تایید", callback_data=f"tx_approve_{tx_id}"), InlineKeyboardButton("❌ رد", callback_data=f"tx_reject_{tx_id}")]])
+    
+    admins = [u for u in GLOBAL_USERS.values() if u.get('is_admin') or u.get('is_owner')]
+    for admin in admins:
+        try:
+            msg = await context.bot.send_photo(admin['user_id'], update.message.photo[-1].file_id, caption=caption, reply_markup=markup)
+            GLOBAL_TRANSACTIONS[tx_id]['admin_messages'].append({'chat_id': admin['user_id'], 'message_id': msg.message_id})
+        except: pass
+        
+    await update.message.reply_text("✅ رسید ارسال شد.", reply_markup=get_main_keyboard(await get_user_async(user.id)))
+    return ConversationHandler.END
+
+async def support_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("لطفا پیام خود را بنویسید:", reply_markup=ReplyKeyboardRemove())
+    return AWAIT_SUPPORT_MESSAGE
+
+async def process_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_doc = await get_user_async(user.id)
+    admins = [u for u in GLOBAL_USERS.values() if u.get('is_admin') or u.get('is_owner')]
+    text = f"📨 پیام پشتیبانی از {user.mention_html()} (ID: `{user.id}`)\n\n`{update.message.text}`"
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("✍️ پاسخ", callback_data=f"reply_support_{user.id}")]])
+    for admin in admins:
+        try: await context.bot.send_message(admin['user_id'], text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        except: pass
+    await update.message.reply_text("✅ پیام ارسال شد.", reply_markup=get_main_keyboard(user_doc))
+    return ConversationHandler.END
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1112,13 +1260,17 @@ def main():
             AWAIT_ADMIN_SELF_COST: [MessageHandler(filters.TEXT, process_admin_self_cost)],
             AWAIT_ADMIN_SELF_MIN_BALANCE: [MessageHandler(filters.TEXT, process_admin_self_min_balance)],
             AWAIT_ADMIN_PANEL_PHOTO: [MessageHandler(filters.PHOTO, process_admin_panel_photo)], 
-            AWAIT_ADMIN_SET_CARD_NUMBER: [MessageHandler(filters.TEXT, lambda u,c: process_admin_choice(u,c))],
-            AWAIT_NEW_CHANNEL: [MessageHandler(filters.TEXT, process_admin_choice)],
+            AWAIT_ADMIN_SET_CARD_NUMBER: [MessageHandler(filters.TEXT, process_simple_admin_input)],
+            AWAIT_NEW_CHANNEL: [MessageHandler(filters.TEXT, process_simple_admin_input)],
             AWAIT_BET_PHOTO: [MessageHandler(filters.PHOTO, process_admin_choice)],
             AWAIT_MANAGE_USER_ID: [MessageHandler(filters.TEXT, process_manage_user_id)],
             AWAIT_MANAGE_USER_ROLE: [MessageHandler(filters.TEXT, process_manage_user_role)],
             AWAIT_BROADCAST_MESSAGE: [MessageHandler(filters.ALL, process_admin_broadcast)],
             AWAIT_ADMIN_SET_BALANCE_ID: [MessageHandler(filters.TEXT, process_admin_choice)],
+            AWAIT_ADMIN_SET_CARD_HOLDER: [MessageHandler(filters.TEXT, process_simple_admin_input)],
+            AWAIT_ADMIN_CREDIT_PRICE: [MessageHandler(filters.TEXT, process_simple_admin_input)],
+            AWAIT_ADMIN_REFERRAL_PRICE: [MessageHandler(filters.TEXT, process_simple_admin_input)],
+            AWAIT_ADMIN_TAX: [MessageHandler(filters.TEXT, process_simple_admin_input)],
         },
         fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
     )

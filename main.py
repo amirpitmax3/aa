@@ -86,6 +86,7 @@ try:
 except Exception as e:
     logging.error(f"❌ Failed to connect to MongoDB: {e}")
     db = None
+    sessions_collection = None # اضافه شد برای جلوگیری از خطای NotImplementedError در صورت قطعی
 
 # --- In-Memory Database ---
 GLOBAL_USERS = {}
@@ -608,7 +609,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+        if sessions_collection is not None: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
     except Exception as e:
         logging.error(f"Failed to start Pyrogram client for phone {phone}: {e}")
         return
@@ -1173,7 +1174,7 @@ async def post_init(application: Application):
     init_memory_db()
     
     # Restore sessions
-    if sessions_collection:
+    if sessions_collection is not None:
         count = 0
         for doc in sessions_collection.find():
             # Check if user still has balance

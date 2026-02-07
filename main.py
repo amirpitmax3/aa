@@ -19,7 +19,7 @@ import random
 # --- Telegram Bot Imports (PTB) ---
 from telegram import (Update, ReplyKeyboardMarkup, KeyboardButton,
                       InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove,
-                      InlineQueryResultArticle, InputTextMessageContent)
+                      InlineQueryResultArticle, InputTextMessageContent, InlineQueryResultCachedPhoto)
 from telegram.constants import ParseMode, ChatAction as PTBChatAction
 from telegram.ext import (Application, CommandHandler, MessageHandler,
                           ConversationHandler, filters, ContextTypes, CallbackQueryHandler,
@@ -61,17 +61,14 @@ def patch_peer_id_validation():
 patch_peer_id_validation()
 
 # --- Environment Variables ---
-# مقادیر توکن و API ها
-BOT_TOKEN = "8594820914:AAHoX2vPxOYUzVNxf7T99IBNQMPOhiLh1RQ" # توکن جدید شما جایگزین شد
-API_ID = 28190856      # ای پی آی آیدی پیروگرام
-API_HASH = "6b9b5309c2a211b526c6ddad6eabb521" # ای پی آی هش پیروگرام
-
-OWNER_ID = 7423552124 # آیدی عددی مالک
-
+BOT_TOKEN = "8594820914:AAHoX2vPxOYUzVNxf7T99IBNQMPOhiLh1RQ"
+API_ID = 28190856
+API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
+OWNER_ID = 7423552124
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 
 # --- MongoDB Connection ---
-MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0" # آدرس دیتابیس جدید جایگزین شد
+MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
 DB_NAME = "telegram_bot_data_merged"
 
 mongo_client = None
@@ -104,7 +101,7 @@ LOGIN_STATES = {}
 
 TX_ID_COUNTER = 1
 BET_ID_COUNTER = 1
-BOT_USERNAME = "" # Will be set on startup
+BOT_USERNAME = ""
 
 # --- Conversation States ---
 (ADMIN_MENU, AWAIT_ADMIN_REPLY,
@@ -189,6 +186,74 @@ TYPING_MODE_STATUS = {}
 PLAYING_MODE_STATUS = {}
 PV_LOCK_STATUS = {}
 
+# --- Helper Functions for Persistence ---
+def save_self_settings_to_db(user_id):
+    """Saves all self-bot settings for a user to MongoDB."""
+    if sessions_collection is None: return
+    
+    # Serialize Sets to Lists
+    enemies_list = list(ACTIVE_ENEMIES.get(user_id, set()))
+    muted_list = list(MUTED_USERS.get(user_id, set()))
+    
+    # Serialize Dict keys to String (MongoDB requirement)
+    reaction_targets = {}
+    if user_id in AUTO_REACTION_TARGETS:
+        for k, v in AUTO_REACTION_TARGETS[user_id].items():
+            reaction_targets[str(k)] = v
+
+    settings = {
+        'clock': CLOCK_STATUS.get(user_id, True),
+        'font': USER_FONT_CHOICES.get(user_id, 'stylized'),
+        'bold': BOLD_MODE_STATUS.get(user_id, False),
+        'secretary': SECRETARY_MODE_STATUS.get(user_id, False),
+        'seen': AUTO_SEEN_STATUS.get(user_id, False),
+        'pv_lock': PV_LOCK_STATUS.get(user_id, False),
+        'anti_login': ANTI_LOGIN_STATUS.get(user_id, False),
+        'typing': TYPING_MODE_STATUS.get(user_id, False),
+        'playing': PLAYING_MODE_STATUS.get(user_id, False),
+        'global_enemy': GLOBAL_ENEMY_STATUS.get(user_id, False),
+        'translate': AUTO_TRANSLATE_TARGET.get(user_id),
+        'enemies': enemies_list,
+        'muted': muted_list,
+        'reactions': reaction_targets
+    }
+    
+    try:
+        sessions_collection.update_one(
+            {'user_id': user_id},
+            {'$set': {'settings': settings}},
+            upsert=False
+        )
+    except Exception as e:
+        logging.error(f"Failed to save settings for {user_id}: {e}")
+
+def load_self_settings_from_db(user_id, doc):
+    """Loads settings from DB document into global variables."""
+    settings = doc.get('settings', {})
+    
+    CLOCK_STATUS[user_id] = settings.get('clock', True)
+    USER_FONT_CHOICES[user_id] = settings.get('font', 'stylized')
+    BOLD_MODE_STATUS[user_id] = settings.get('bold', False)
+    SECRETARY_MODE_STATUS[user_id] = settings.get('secretary', False)
+    AUTO_SEEN_STATUS[user_id] = settings.get('seen', False)
+    PV_LOCK_STATUS[user_id] = settings.get('pv_lock', False)
+    ANTI_LOGIN_STATUS[user_id] = settings.get('anti_login', False)
+    TYPING_MODE_STATUS[user_id] = settings.get('typing', False)
+    PLAYING_MODE_STATUS[user_id] = settings.get('playing', False)
+    GLOBAL_ENEMY_STATUS[user_id] = settings.get('global_enemy', False)
+    AUTO_TRANSLATE_TARGET[user_id] = settings.get('translate')
+    
+    # Deserialize Lists to Sets/Tuples
+    enemies_raw = settings.get('enemies', [])
+    ACTIVE_ENEMIES[user_id] = set(tuple(x) for x in enemies_raw)
+    
+    muted_raw = settings.get('muted', [])
+    MUTED_USERS[user_id] = set(tuple(x) for x in muted_raw)
+    
+    # Deserialize Reaction Dict (Keys back to Int)
+    reactions_raw = settings.get('reactions', {})
+    AUTO_REACTION_TARGETS[user_id] = {int(k): v for k, v in reactions_raw.items()}
+
 # web_app Flask
 web_app = Flask(__name__)
 
@@ -209,7 +274,6 @@ def init_memory_db():
             for doc in db.users.find():
                 u_id = int(doc['user_id'])
                 GLOBAL_USERS[u_id] = doc
-                # Ensure fields for self bot
                 if 'self_active' not in doc: GLOBAL_USERS[u_id]['self_active'] = False
                 if 'self_last_payment' not in doc: GLOBAL_USERS[u_id]['self_last_payment'] = 0
             
@@ -231,14 +295,13 @@ def init_memory_db():
 
         except Exception as e: logging.error(f"Error init DB: {e}")
 
-    # Defaults including Self Bot settings
     defaults = {
         'credit_price': '1000', 'initial_balance': '10', 'referral_reward': '5',
         'bet_tax_rate': '2', 'card_number': 'تنظیم نشده', 'card_holder': 'تنظیم نشده',
         'bet_photo_file_id': 'None', 'forced_channel_lock': 'false',
-        'self_bot_hourly_cost': '1',    # هزینه ساعتی سلف
-        'self_bot_min_balance': '10',   # حداقل موجودی برای فعالسازی
-        'self_panel_photo': 'None'      # عکس پنل سلف (تنظیم توسط ادمین)
+        'self_bot_hourly_cost': '1',
+        'self_bot_min_balance': '10',
+        'self_panel_photo': 'None'
     }
     for k, v in defaults.items():
         if k not in GLOBAL_SETTINGS: GLOBAL_SETTINGS[k] = v
@@ -278,7 +341,6 @@ async def get_user_async(user_id):
         if 'self_last_payment' not in u: u['self_last_payment'] = 0
         return u
     
-    # New User
     try: bal = int(GLOBAL_SETTINGS.get('initial_balance', '10'))
     except: bal = 10
     is_owner = (user_id == OWNER_ID)
@@ -303,7 +365,6 @@ def get_user_display_name(user):
         GLOBAL_USERS[user.id]['first_name'] = user.first_name
     return f"@{user.username}" if user.username else html.escape(user.first_name or "User")
 
-# --- Keyboards (Main Bot) ---
 def get_main_keyboard(user_doc):
     if user_doc.get('is_owner'):
         return ReplyKeyboardMarkup([
@@ -347,7 +408,6 @@ def stylize_time(time_str: str, style: str) -> str:
     return ''.join(font_map.get(char, char) for char in time_str)
 
 async def stop_self_bot_due_to_auth(user_id):
-    """Stops the bot due to invalid session and updates DB."""
     logging.warning(f"Stopping self-bot for {user_id} due to invalid session.")
     if user_id in ACTIVE_BOTS:
         client, tasks = ACTIVE_BOTS[user_id]
@@ -398,13 +458,11 @@ async def translate_text(text: str, target_lang: str) -> str:
     return text
 
 def get_panel_photo(user_id):
-    # This now uses ONLY the global setting set by Admin, as requested.
     global_photo = GLOBAL_SETTINGS.get('self_panel_photo')
     if global_photo and global_photo != 'None':
         return global_photo
     return None
 
-# --- Self Bot Background Tasks ---
 async def update_profile_clock(client: Client, user_id: int):
     while user_id in ACTIVE_BOTS:
         try:
@@ -453,7 +511,6 @@ async def status_action_task(client: Client, user_id: int):
             await asyncio.sleep(4)
         except Exception: await asyncio.sleep(60)
 
-# --- Pyrogram Message Handlers ---
 async def outgoing_message_modifier(client, message):
     user_id = client.me.id
     if not message.text or re.match(COMMAND_REGEX, message.text.strip(), re.IGNORECASE): return
@@ -502,9 +559,7 @@ async def help_controller(client, message):
     try: await message.edit_text(HELP_TEXT)
     except: await message.reply_text(HELP_TEXT)
 
-# --- Panel Logic (Updated for PTB Integration) ---
 def get_self_panel_keyboard_ptb(user_id):
-    """Generates the PTB InlineKeyboardMarkup based on user's self-bot settings."""
     s_clock = "✅" if CLOCK_STATUS.get(user_id, True) else "❌"
     s_bold = "✅" if BOLD_MODE_STATUS.get(user_id, False) else "❌"
     s_sec = "✅" if SECRETARY_MODE_STATUS.get(user_id, False) else "❌"
@@ -540,7 +595,6 @@ def get_self_panel_keyboard_ptb(user_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# Pyrogram Handler - Now calls Main Bot Inline Mode
 async def panel_command_controller(client, message):
     try:
         user_id = client.me.id
@@ -559,9 +613,6 @@ async def panel_command_controller(client, message):
         await message.edit_text("🚫 در این چت اجازه ارسال پنل بصورت اینلاین وجود ندارد.")
     except Exception as e:
         await message.edit_text(f"❌ خطا: {e}\nلطفا ابتدا دستور /start را در ربات اصلی بزنید.")
-
-# Photo Setting Removed from here (as per request) - Now handled in Admin Panel
-# Handler for "تنظیم عکس" and "حذف عکس" removed from client.add_handler below.
 
 async def reply_based_controller(client, message):
     user_id = client.me.id
@@ -599,6 +650,9 @@ async def reply_based_controller(client, message):
                 ORIGINAL_PROFILE_DATA[user_id] = {'first_name': me.first_name, 'bio': me.bio}
                 COPY_MODE_STATUS[user_id] = True
                 CLOCK_STATUS[user_id] = False
+                # No separate saving needed for copy/clock toggle here as CLOCK_STATUS is managed via panel mainly,
+                # but if done via command, we should save.
+                save_self_settings_to_db(user_id)
                 target_photos = [p async for p in client.get_chat_photos(target_id, limit=1)]
                 await client.update_profile(first_name=user.first_name, bio=(user.bio or "")[:70])
                 if target_photos: await client.set_profile_photo(photo=target_photos[0].file_id)
@@ -607,28 +661,35 @@ async def reply_based_controller(client, message):
                 if user_id in ORIGINAL_PROFILE_DATA:
                     data = ORIGINAL_PROFILE_DATA[user_id]
                     COPY_MODE_STATUS[user_id] = False
+                    save_self_settings_to_db(user_id)
                     await client.update_profile(first_name=data.get('first_name'), bio=data.get('bio'))
                     await message.edit_text("👤 هویت بازگردانده شد.")
             elif cmd == "دشمن روشن":
                 s = ACTIVE_ENEMIES.get(user_id, set()); s.add((target_id, message.chat.id)); ACTIVE_ENEMIES[user_id] = s
+                save_self_settings_to_db(user_id)
                 await message.edit_text("⚔️ دشمن اضافه شد.")
             elif cmd == "دشمن خاموش":
                 s = ACTIVE_ENEMIES.get(user_id, set()); s.discard((target_id, message.chat.id)); ACTIVE_ENEMIES[user_id] = s
+                save_self_settings_to_db(user_id)
                 await message.edit_text("🏳️ دشمن حذف شد.")
             elif cmd == "بلاک روشن": await client.block_user(target_id); await message.edit_text("🚫 کاربر بلاک شد.")
             elif cmd == "بلاک خاموش": await client.unblock_user(target_id); await message.edit_text("⭕️ کاربر آنبلاک شد.")
             elif cmd == "سکوت روشن":
                 s = MUTED_USERS.get(user_id, set()); s.add((target_id, message.chat.id)); MUTED_USERS[user_id] = s
+                save_self_settings_to_db(user_id)
                 await message.edit_text("🔇 کاربر ساکت شد.")
             elif cmd == "سکوت خاموش":
                 s = MUTED_USERS.get(user_id, set()); s.discard((target_id, message.chat.id)); MUTED_USERS[user_id] = s
+                save_self_settings_to_db(user_id)
                 await message.edit_text("🔊 کاربر از سکوت خارج شد.")
             elif cmd.startswith("ریاکشن ") and cmd != "ریاکشن خاموش":
                 emoji = cmd.split()[1]
                 t = AUTO_REACTION_TARGETS.get(user_id, {}); t[target_id] = emoji; AUTO_REACTION_TARGETS[user_id] = t
+                save_self_settings_to_db(user_id)
                 await message.edit_text(f"👍 واکنش {emoji} تنظیم شد.")
             elif cmd == "ریاکشن خاموش":
                 t = AUTO_REACTION_TARGETS.get(user_id, {}); t.pop(target_id, None); AUTO_REACTION_TARGETS[user_id] = t
+                save_self_settings_to_db(user_id)
                 await message.edit_text("❌ واکنش حذف شد.")
 
 async def start_bot_instance(session_string: str, phone: str, font_style: str, disable_clock: bool = False):
@@ -636,26 +697,31 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection is not None: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+        if sessions_collection is not None:
+            # Update user_id just in case, but MAINLY load settings
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+            doc = sessions_collection.find_one({'phone_number': phone})
+            if doc:
+                load_self_settings_from_db(user_id, doc)
     except Exception as e:
         logging.error(f"Failed to start Pyrogram client for phone {phone}: {e}")
         return
 
-    # Kill existing instance if any
     if user_id in ACTIVE_BOTS:
         for t in ACTIVE_BOTS[user_id][1]: t.cancel()
     
-    USER_FONT_CHOICES[user_id] = font_style
-    CLOCK_STATUS[user_id] = not disable_clock
+    # If not loaded from DB (new session), set defaults
+    if user_id not in USER_FONT_CHOICES:
+        USER_FONT_CHOICES[user_id] = font_style
+    if user_id not in CLOCK_STATUS:
+        CLOCK_STATUS[user_id] = not disable_clock
     
-    # Handlers
     client.add_handler(PyroMessageHandler(lambda c, m: m.delete() if PV_LOCK_STATUS.get(c.me.id) else None, pyro_filters.private & ~pyro_filters.me & ~pyro_filters.bot), group=-5)
     client.add_handler(PyroMessageHandler(lambda c, m: c.read_chat_history(m.chat.id) if AUTO_SEEN_STATUS.get(c.me.id) else None, pyro_filters.private & ~pyro_filters.me), group=-4)
     client.add_handler(PyroMessageHandler(incoming_message_manager, pyro_filters.all & ~pyro_filters.me), group=-3)
     client.add_handler(PyroMessageHandler(outgoing_message_modifier, pyro_filters.text & pyro_filters.me & ~pyro_filters.reply), group=-1)
     client.add_handler(PyroMessageHandler(help_controller, pyro_filters.me & pyro_filters.regex("^راهنما$")))
     client.add_handler(PyroMessageHandler(panel_command_controller, pyro_filters.me & pyro_filters.regex(r"^(پنل|panel)$")))
-    # Photo setting handlers removed here as requested
     client.add_handler(PyroMessageHandler(reply_based_controller, pyro_filters.me)) 
     client.add_handler(PyroMessageHandler(enemy_handler, pyro_filters.create(lambda _, c, m: (m.from_user.id, m.chat.id) in ACTIVE_ENEMIES.get(c.me.id, set()) or GLOBAL_ENEMY_STATUS.get(c.me.id)) & ~pyro_filters.me), group=1)
     client.add_handler(PyroMessageHandler(secretary_auto_reply_handler, pyro_filters.private & ~pyro_filters.me), group=1)
@@ -686,34 +752,19 @@ async def stop_self_bot_due_to_balance(user_id):
         GLOBAL_USERS[user_id]['self_active'] = False
         save_user_immediate(user_id)
 
-# =======================================================
-#  بخش ۵: سیستم لاگین سلف در ربات اصلی (PTB)
-# =======================================================
-
 async def self_bot_activation_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_doc = await get_user_async(user.id)
-    
     min_bal = int(await get_setting_async('self_bot_min_balance') or 10)
     hourly_cost = int(await get_setting_async('self_bot_hourly_cost') or 1)
-    
     if user_doc['balance'] < min_bal:
         await update.message.reply_text(f"⛔️ موجودی شما کمتر از حد مجاز است.\nحداقل موجودی برای فعال‌سازی سلف: {min_bal} الماس", reply_markup=get_main_keyboard(user_doc))
         return ConversationHandler.END
-        
     if user_doc.get('self_active') and user.id in ACTIVE_BOTS:
         await update.message.reply_text("✅ سلف شما هم‌اکنون فعال است.", reply_markup=get_main_keyboard(user_doc))
         return ConversationHandler.END
-        
     kb = ReplyKeyboardMarkup([[KeyboardButton("📱 ارسال شماره تلفن", request_contact=True)], [KeyboardButton("بازگشت")]], resize_keyboard=True, one_time_keyboard=True)
-    await update.message.reply_text(
-        f"🤖 **فعال‌سازی سلف بات**\n\n"
-        f"💎 هزینه ساعتی: {hourly_cost} الماس\n"
-        f"⚠️ اگر موجودی شما تمام شود، سلف به طور خودکار خاموش می‌شود.\n\n"
-        f"لطفا برای شروع شماره خود را ارسال کنید:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=kb
-    )
+    await update.message.reply_text(f"🤖 **فعال‌سازی سلف بات**\n\n💎 هزینه ساعتی: {hourly_cost} الماس\n⚠️ اگر موجودی شما تمام شود، سلف به طور خودکار خاموش می‌شود.\n\nلطفا برای شروع شماره خود را ارسال کنید:", parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
     return AWAIT_SELF_CONTACT
 
 async def process_self_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -721,27 +772,19 @@ async def process_self_contact(update: Update, context: ContextTypes.DEFAULT_TYP
     if update.message.text == "بازگشت":
         await cancel_conversation(update, context)
         return ConversationHandler.END
-
     if not update.message.contact:
         await update.message.reply_text("لطفا از دکمه ارسال شماره استفاده کنید.")
         return AWAIT_SELF_CONTACT
-        
     phone = update.message.contact.phone_number
     await update.message.reply_text("⏳ در حال اتصال به سرور تلگرام...", reply_markup=ReplyKeyboardRemove())
-    
     temp_client = Client(f"login_temp_{user.id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, no_updates=True)
     await temp_client.connect()
-    
     try:
         sent_code = await temp_client.send_code(phone)
         context.user_data['login_client'] = temp_client
         context.user_data['login_phone'] = phone
         context.user_data['login_hash'] = sent_code.phone_code_hash
-        
-        await update.message.reply_text(
-            "✅ کد تایید ارسال شد.\n"
-            "لطفا کد را به صورت اعداد جدا شده با فاصله یا نقطه ارسال کنید (مثلا: 1 2 3 4 5 یا 1.2.3.4.5) تا توسط تلگرام لینک شناسایی نشود."
-        )
+        await update.message.reply_text("✅ کد تایید ارسال شد.\nلطفا کد را به صورت اعداد جدا شده با فاصله یا نقطه ارسال کنید (مثلا: 1 2 3 4 5 یا 1.2.3.4.5) تا توسط تلگرام لینک شناسایی نشود.")
         return AWAIT_SELF_CODE
     except Exception as e:
         await temp_client.disconnect()
@@ -753,7 +796,6 @@ async def process_self_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     temp_client: Client = context.user_data.get('login_client')
     phone = context.user_data.get('login_phone')
     phone_hash = context.user_data.get('login_hash')
-    
     try:
         await temp_client.sign_in(phone, phone_hash, code)
         await finalize_login(update, context, temp_client, phone)
@@ -770,7 +812,6 @@ async def process_self_password(update: Update, context: ContextTypes.DEFAULT_TY
     password = update.message.text
     temp_client: Client = context.user_data.get('login_client')
     phone = context.user_data.get('login_phone')
-    
     try:
         await temp_client.check_password(password)
         await finalize_login(update, context, temp_client, phone)
@@ -786,11 +827,7 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE, cli
     await client.disconnect()
     
     if sessions_collection is not None:
-        sessions_collection.update_one(
-            {'phone_number': phone}, 
-            {'$set': {'session_string': session_str, 'user_id': me.id, 'real_owner_id': user_id}}, 
-            upsert=True
-        )
+        sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': session_str, 'user_id': me.id, 'real_owner_id': user_id}}, upsert=True)
     
     user_doc = await get_user_async(user_id)
     user_doc['self_active'] = True
@@ -807,24 +844,14 @@ async def finalize_login(update: Update, context: ContextTypes.DEFAULT_TYPE, cli
     asyncio.create_task(start_bot_instance(session_str, phone, 'stylized'))
     await update.message.reply_text(msg, reply_markup=get_main_keyboard(user_doc))
 
-
-# =======================================================
-#  بخش ۶: سیستم بیلیینگ و جاب (Billing Job)
-# =======================================================
-
 async def billing_job(context: ContextTypes.DEFAULT_TYPE):
     cost_str = await get_setting_async('self_bot_hourly_cost')
     try: cost = int(cost_str or 1)
     except: cost = 1
-    
     now = time.time()
-    
     for user_id, user_data in list(GLOBAL_USERS.items()):
-        if not user_data.get('self_active'):
-            continue
-            
+        if not user_data.get('self_active'): continue
         last_pay = user_data.get('self_last_payment', 0)
-        
         if now - last_pay >= 3600:
             if user_data['balance'] >= cost:
                 user_data['balance'] -= cost
@@ -834,43 +861,27 @@ async def billing_job(context: ContextTypes.DEFAULT_TYPE):
                 await stop_self_bot_due_to_balance(user_id)
                 try:
                     kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 تمدید و ادامه سرویس")], [KeyboardButton("💰 موجودی")]], resize_keyboard=True)
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text="⚠️ **هشدار: موجودی الماس شما به پایان رسید!**\n\nسلف بات شما خاموش شد و تنظیمات (مثل ساعت پروفایل) حذف گردید.\nلطفا حساب خود را شارژ کنید و سپس دکمه تمدید را بزنید.",
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=kb
-                    )
-                except Exception as e:
-                    logging.warning(f"Failed to send billing alert to {user_id}: {e}")
+                    await context.bot.send_message(chat_id=user_id, text="⚠️ **هشدار: موجودی الماس شما به پایان رسید!**\n\nسلف بات شما خاموش شد و تنظیمات (مثل ساعت پروفایل) حذف گردید.\nلطفا حساب خود را شارژ کنید و سپس دکمه تمدید را بزنید.", parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+                except Exception as e: logging.warning(f"Failed to send billing alert to {user_id}: {e}")
 
 async def continue_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_doc = await get_user_async(user_id)
-    
     min_bal = int(await get_setting_async('self_bot_min_balance') or 10)
-    
     if user_doc['balance'] < min_bal:
         await update.message.reply_text(f"❌ موجودی کافی نیست. حداقل {min_bal} الماس لازم است.", reply_markup=get_main_keyboard(user_doc))
         return
-
     session_doc = sessions_collection.find_one({'real_owner_id': user_id})
     if not session_doc:
         await update.message.reply_text("❌ سشن شما یافت نشد. لطفا مجدد فعال‌سازی را انجام دهید.", reply_markup=get_main_keyboard(user_doc))
         return
-
     user_doc['self_active'] = True
     user_doc['self_last_payment'] = time.time()
-    
     cost = int(await get_setting_async('self_bot_hourly_cost') or 1)
     user_doc['balance'] -= cost
     save_user_immediate(user_id)
-    
     asyncio.create_task(start_bot_instance(session_doc['session_string'], session_doc['phone_number'], 'stylized'))
     await update.message.reply_text(f"✅ سرویس مجددا فعال شد.\n💎 {cost} الماس کسر گردید.", reply_markup=get_main_keyboard(user_doc))
-
-# =======================================================
-#  بخش ۷: هندلرهای ادمین (Admin Handlers) - PTB
-# =======================================================
 
 async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_doc = await get_user_async(update.effective_user.id)
@@ -883,13 +894,11 @@ async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_admin_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text
     context.user_data['admin_choice'] = choice
-    
     prompts = {
         "⚙️ هزینه سلف (ساعتی)": "هزینه هر ساعت استفاده از سلف (به الماس) را وارد کنید:",
         "💎 حداقل موجودی سلف": "حداقل موجودی لازم برای روشن کردن سلف را وارد کنید:",
         "🖼 تنظیم عکس پنل سلف": "لطفا عکس جدید برای پنل سلف را ارسال کنید:",
     }
-    
     if choice in prompts:
         await update.message.reply_text(prompts[choice], reply_markup=ReplyKeyboardRemove())
         if choice == "⚙️ هزینه سلف (ساعتی)": return AWAIT_ADMIN_SELF_COST
@@ -967,7 +976,6 @@ async def process_admin_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         
     return AWAIT_ADMIN_REPLY
 
-# Admin Handlers
 async def process_admin_self_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         val = int(update.message.text)
@@ -1065,11 +1073,9 @@ async def process_admin_broadcast(update, context):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_doc = await get_user_async(user.id)
-    
     if update.effective_chat.type != 'private':
         await update.message.reply_text("👋 ربات شرط‌بندی فعال است.", reply_markup=bet_group_keyboard)
         return
-        
     await update.message.reply_text("👋 به خدمات مجازی darkself خوش آمدید.", reply_markup=get_main_keyboard(user_doc))
 
 async def show_balance(update, context):
@@ -1087,22 +1093,16 @@ async def cancel_conversation(update, context):
 
 # --- Callback & Inline Handlers ---
 async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles inline query for panel."""
     query = update.inline_query.query
     if query == "panel":
         user_id = update.effective_user.id
         photo_id = get_panel_photo(user_id)
         markup = get_self_panel_keyboard_ptb(user_id)
-        
-        results = [
-            InlineQueryResultArticle(
-                id=str(secrets.randbelow(99999)),
-                title="پنل تنظیمات سلف",
-                input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار", parse_mode=ParseMode.MARKDOWN),
-                reply_markup=markup,
-                thumbnail_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
-            )
-        ]
+        caption = f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: `{user_id}`\n\nوضعیت اتصال: ✅ برقرار"
+        if photo_id:
+            results = [InlineQueryResultCachedPhoto(id=str(secrets.randbelow(99999)), photo_file_id=photo_id, caption=caption, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)]
+        else:
+            results = [InlineQueryResultArticle(id=str(secrets.randbelow(99999)), title="پنل تنظیمات سلف", input_message_content=InputTextMessageContent(caption, parse_mode=ParseMode.MARKDOWN), reply_markup=markup, thumbnail_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg")]
         await update.inline_query.answer(results, cache_time=0)
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1111,14 +1111,14 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     data = query.data
     user_id = update.effective_user.id
 
-    # --- Self Bot Callbacks (Ported from Pyrogram) ---
     if data.startswith("toggle_") or data.startswith("cycle_") or data.startswith("lang_") or data.startswith("close_"):
-        if str(user_id) not in data: # Security check: Ensure user clicks their own panel
+        if str(user_id) not in data:
              await query.answer("⛔️ این پنل متعلق به شما نیست!", show_alert=True)
              return
 
         if data.startswith("toggle_clock"):
             CLOCK_STATUS[user_id] = not CLOCK_STATUS.get(user_id, True)
+            save_self_settings_to_db(user_id)
             if user_id in ACTIVE_BOTS and CLOCK_STATUS[user_id]:
                  asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[user_id][0], user_id))
         
@@ -1127,36 +1127,37 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             idx = (FONT_KEYS_ORDER.index(cur) + 1) % len(FONT_KEYS_ORDER)
             USER_FONT_CHOICES[user_id] = FONT_KEYS_ORDER[idx]
             CLOCK_STATUS[user_id] = True
+            save_self_settings_to_db(user_id)
             if user_id in ACTIVE_BOTS:
                  asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[user_id][0], user_id))
 
-        elif data.startswith("toggle_bold"): BOLD_MODE_STATUS[user_id] = not BOLD_MODE_STATUS.get(user_id, False)
-        elif data.startswith("toggle_sec"): SECRETARY_MODE_STATUS[user_id] = not SECRETARY_MODE_STATUS.get(user_id, False)
-        elif data.startswith("toggle_seen"): AUTO_SEEN_STATUS[user_id] = not AUTO_SEEN_STATUS.get(user_id, False)
-        elif data.startswith("toggle_pv"): PV_LOCK_STATUS[user_id] = not PV_LOCK_STATUS.get(user_id, False)
-        elif data.startswith("toggle_anti"): ANTI_LOGIN_STATUS[user_id] = not ANTI_LOGIN_STATUS.get(user_id, False)
+        elif data.startswith("toggle_bold"): BOLD_MODE_STATUS[user_id] = not BOLD_MODE_STATUS.get(user_id, False); save_self_settings_to_db(user_id)
+        elif data.startswith("toggle_sec"): SECRETARY_MODE_STATUS[user_id] = not SECRETARY_MODE_STATUS.get(user_id, False); save_self_settings_to_db(user_id)
+        elif data.startswith("toggle_seen"): AUTO_SEEN_STATUS[user_id] = not AUTO_SEEN_STATUS.get(user_id, False); save_self_settings_to_db(user_id)
+        elif data.startswith("toggle_pv"): PV_LOCK_STATUS[user_id] = not PV_LOCK_STATUS.get(user_id, False); save_self_settings_to_db(user_id)
+        elif data.startswith("toggle_anti"): ANTI_LOGIN_STATUS[user_id] = not ANTI_LOGIN_STATUS.get(user_id, False); save_self_settings_to_db(user_id)
         elif data.startswith("toggle_type"):
             TYPING_MODE_STATUS[user_id] = not TYPING_MODE_STATUS.get(user_id, False)
             if TYPING_MODE_STATUS[user_id]: PLAYING_MODE_STATUS[user_id] = False
+            save_self_settings_to_db(user_id)
         elif data.startswith("toggle_game"):
             PLAYING_MODE_STATUS[user_id] = not PLAYING_MODE_STATUS.get(user_id, False)
             if PLAYING_MODE_STATUS[user_id]: TYPING_MODE_STATUS[user_id] = False
-        elif data.startswith("toggle_g_enemy"): GLOBAL_ENEMY_STATUS[user_id] = not GLOBAL_ENEMY_STATUS.get(user_id, False)
+            save_self_settings_to_db(user_id)
+        elif data.startswith("toggle_g_enemy"): GLOBAL_ENEMY_STATUS[user_id] = not GLOBAL_ENEMY_STATUS.get(user_id, False); save_self_settings_to_db(user_id)
         elif data.startswith("lang_"):
             l = data.split("_")[1]
             AUTO_TRANSLATE_TARGET[user_id] = l if AUTO_TRANSLATE_TARGET.get(user_id) != l else None
+            save_self_settings_to_db(user_id)
         
         elif data.startswith("close_panel"):
             await query.message.delete()
             return
 
-        # Refresh Panel
-        try:
-            await query.edit_message_reply_markup(reply_markup=get_self_panel_keyboard_ptb(user_id))
+        try: await query.edit_message_reply_markup(reply_markup=get_self_panel_keyboard_ptb(user_id))
         except: pass
         return
 
-    # --- Other Callbacks ---
     if data == "check_join_membership":
         await query.message.delete()
         return
@@ -1169,124 +1170,31 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     if data.startswith("bet_"):
         bet_id = int(data.split('_')[2])
-        if 'join' in data:
-            await query.edit_message_text("✅ شما به شرط پیوستید! (darkself)")
-        elif 'cancel' in data:
-            await query.edit_message_text("❌ شرط لغو شد.")
+        if 'join' in data: await query.edit_message_text("✅ شما به شرط پیوستید! (darkself)")
+        elif 'cancel' in data: await query.edit_message_text("❌ شرط لغو شد.")
         return
 
 async def start_bet_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global BET_ID_COUNTER
     if not update.message: return
-    
     amount = 100
     try:
         match = re.search(r'(\d+)', update.message.text)
         if match: amount = int(match.group(1))
     except: pass
-    
-    text = (
-        f"♦️ — شرط جدید (ID: {BET_ID_COUNTER}) — ♦️\n"
-        f"| 💰 | تعداد الماس : {amount:,}\n"
-        f"| 👤 | سازنده : {get_user_display_name(update.effective_user)}\n"
-        f"♦️ — خدمات مجازی darkself — ♦️"
-    )
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ پیوستن", callback_data=f"bet_join_{BET_ID_COUNTER}"),
-         InlineKeyboardButton("❌ لغو شرط", callback_data=f"bet_cancel_{BET_ID_COUNTER}")]
-    ])
-    
+    text = (f"♦️ — شرط جدید (ID: {BET_ID_COUNTER}) — ♦️\n| 💰 | تعداد الماس : {amount:,}\n| 👤 | سازنده : {get_user_display_name(update.effective_user)}\n♦️ — خدمات مجازی darkself — ♦️")
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ پیوستن", callback_data=f"bet_join_{BET_ID_COUNTER}"), InlineKeyboardButton("❌ لغو شرط", callback_data=f"bet_cancel_{BET_ID_COUNTER}")]])
     BET_ID_COUNTER += 1
     await update.message.reply_text(text, reply_markup=kb)
-
-async def group_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
-    sender = update.effective_user
-    target_user = sender
-    reply_to_message = update.message.reply_to_message
-    if reply_to_message and reply_to_message.from_user:
-        sender_doc = await get_user_async(sender.id)
-        if sender_doc.get('is_admin') or sender_doc.get('is_moderator') or sender_doc.get('is_owner'):
-            target_user = reply_to_message.from_user
-    target_user_doc = await get_user_async(target_user.id)
-    price_str = await get_setting_async('credit_price')
-    try: price = int(price_str or 1000)
-    except: price = 1000
-    toman_value = target_user_doc['balance'] * price
-    target_display_name = get_user_display_name(target_user)
-    text = (f"👤 کاربر: {target_display_name}\n💰 موجودی الماس: {target_user_doc['balance']:,}\n💳 معادل تخمینی: {toman_value:,.0f} تومان")
-    await update.message.reply_text(text)
-
-async def transfer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.reply_to_message or not update.message.reply_to_message.from_user:
-        await update.message.reply_text("⚠️ برای انتقال باید روی پیام کاربر مورد نظر ریپلای کنید.")
-        return
-    sender = update.effective_user
-    receiver = update.message.reply_to_message.from_user
-    try:
-        match = re.search(r'(\d+)', update.message.text)
-        if not match: return
-        amount = int(match.group(1))
-        if amount <= 0: await update.message.reply_text("تعداد الماس انتقال باید مثبت باشد."); return
-    except: await update.message.reply_text("خطا در خواندن تعداد."); return 
-    try:
-        sender_doc = await get_user_async(sender.id)
-        if sender.id == receiver.id: await update.message.reply_text("انتقال به خود امکان‌پذیر نیست."); return
-        if sender_doc['balance'] < amount: await update.message.reply_text("موجودی الماس شما کافی نیست."); return
-        receiver_doc = await get_user_async(receiver.id)
-        sender_doc['balance'] -= amount
-        receiver_doc['balance'] += amount
-        save_user_immediate(sender.id)
-        save_user_immediate(receiver.id)
-        sender_display_name = get_user_display_name(sender)
-        receiver_display_name = get_user_display_name(receiver)
-        text = (f"✅ انتقال موفق ✅\n\n👤 از: {sender_display_name}\n👥 به: {receiver_display_name}\n💰 تعداد: {amount:,} الماس")
-        await update.message.reply_text(text)
-    except Exception as e: logging.error(f"Error during transfer: {e}"); await update.message.reply_text("خطایی در هنگام انتقال رخ داد.")
-
-async def show_bet_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("منوی شرط:", reply_markup=bet_group_keyboard)
-
-async def deduct_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.reply_to_message: return
-    admin_user = update.effective_user
-    admin_doc = await get_user_async(admin_user.id)
-    if not (admin_doc.get('is_admin') or admin_doc.get('is_moderator') or admin_doc.get('is_owner')): return
-    target_user = update.message.reply_to_message.from_user
-    if target_user.id == admin_user.id: await update.message.reply_text("شما نمی‌توانید از خودتان الماس کسر کنید."); return
-    if target_user.id == OWNER_ID: await update.message.reply_text("شما نمی‌توانید از مالک اصلی الماس کسر کنید."); return
-    match = re.search(r'(\d+)', update.message.text)
-    if not match: await update.message.reply_text("لطفا مقدار عددی برای کسر را مشخص کنید."); return
-    try:
-        amount_to_deduct = int(match.group(1))
-        if amount_to_deduct <= 0: await update.message.reply_text("مقدار کسر باید یک عدد مثبت باشد."); return
-    except: await update.message.reply_text("مقدار وارد شده نامعتبر است."); return
-    target_doc = await get_user_async(target_user.id)
-    if target_doc.get('balance', 0) < amount_to_deduct: await update.message.reply_text(f"کاربر موجودی کافی ندارد."); return
-    target_doc['balance'] -= amount_to_deduct
-    save_user_immediate(target_user.id)
-    admin_display_name = get_user_display_name(admin_user)
-    tehran_time = datetime.now(TEHRAN_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
-    receipt_text = (f"❌ {amount_to_deduct:,} الماس کسر شد.\n🧾 رسید:\n📤 ادمین: {admin_display_name}\n📥 کاربر: {get_user_display_name(target_user)}\n⏰ {tehran_time}")
-    await update.message.reply_text(receipt_text)
-
-# =======================================================
-#  بخش ۸: اجرای اصلی
-# =======================================================
 
 async def post_init(application: Application):
     global BOT_USERNAME
     init_memory_db()
-    
-    # Store Bot Username for Inline Query
     try:
         me = await application.bot.get_me()
         BOT_USERNAME = me.username
         logging.info(f"Bot Username: {BOT_USERNAME}")
     except: pass
-
-    # Restore sessions
     if sessions_collection is not None:
         count = 0
         for doc in sessions_collection.find():
@@ -1297,7 +1205,6 @@ async def post_init(application: Application):
                     asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), 'stylized'))
                     count += 1
         logging.info(f"Restored {count} active self-bots.")
-
     if application.job_queue:
         application.job_queue.run_repeating(billing_job, interval=60, first=10)
         logging.info("Billing job started.")
@@ -1305,17 +1212,9 @@ async def post_init(application: Application):
 def main():
     Thread(target=lambda: web_app.run(host='0.0.0.0', port=10000), daemon=True).start()
     Thread(target=background_db_sync, daemon=True).start()
-
     from telegram.request import HTTPXRequest
     request = HTTPXRequest(connection_pool_size=8)
-    
-    application = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .request(request)
-        .post_init(post_init)
-        .build()
-    )
+    application = (Application.builder().token(BOT_TOKEN).request(request).post_init(post_init).build())
     
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(MessageHandler(filters.Regex("^💰 موجودی$"), show_balance))
@@ -1373,20 +1272,14 @@ def main():
         allow_reentry=True
     )
     application.add_handler(admin_conv)
-    
-    # Inline Handler for Panel
     application.add_handler(InlineQueryHandler(inline_query_handler))
-
-    # Group Handlers
     application.add_handler(MessageHandler(filters.Regex(r'^(شرط|بت)$') & filters.ChatType.GROUPS, show_bet_keyboard_handler))
     application.add_handler(MessageHandler(filters.Regex(r'^(شرطبندی|شرط) \d+$') & filters.ChatType.GROUPS, start_bet_handler))
     application.add_handler(MessageHandler(filters.Regex(r'^(انتقال|transfer)\s+(\d+)$') & filters.REPLY & filters.ChatType.GROUPS, transfer_handler))
     application.add_handler(MessageHandler(filters.Regex(r'^موجودی$') & filters.ChatType.GROUPS, group_balance_handler))
     application.add_handler(MessageHandler(filters.Regex(r'^(کسر اعتبار|کسر) \d+$') & filters.REPLY & filters.ChatType.GROUPS, deduct_balance_handler))
     application.add_handler(MessageHandler(filters.Regex(r'^موجودی 💰$') & filters.ChatType.GROUPS, group_balance_handler))
-
     application.add_handler(CallbackQueryHandler(callback_query_handler))
-
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":

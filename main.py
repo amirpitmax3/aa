@@ -103,6 +103,20 @@ LOGIN_STATES = {}
 TX_ID_COUNTER = 1
 BET_ID_COUNTER = 1
 
+# --- Conversation States ---
+(ADMIN_MENU, AWAIT_ADMIN_REPLY,
+ AWAIT_ADMIN_SET_CARD_NUMBER, AWAIT_ADMIN_SET_CARD_HOLDER,
+ AWAIT_NEW_CHANNEL, AWAIT_BET_PHOTO,
+ AWAIT_ADMIN_SET_BALANCE_ID, AWAIT_ADMIN_SET_BALANCE,
+ AWAIT_ADMIN_ADD_BALANCE_ID, AWAIT_ADMIN_ADD_BALANCE_AMOUNT,
+ AWAIT_ADMIN_DEDUCT_BALANCE_ID, AWAIT_ADMIN_DEDUCT_BALANCE_AMOUNT,
+ AWAIT_ADMIN_TAX, AWAIT_ADMIN_CREDIT_PRICE, AWAIT_ADMIN_REFERRAL_PRICE,
+ AWAIT_MANAGE_USER_ID, AWAIT_MANAGE_USER_ROLE,
+ AWAIT_BROADCAST_MESSAGE,
+ AWAIT_SELF_CONTACT, AWAIT_SELF_CODE, AWAIT_SELF_PASSWORD,
+ AWAIT_ADMIN_SELF_COST, AWAIT_ADMIN_SELF_MIN, AWAIT_ADMIN_SELF_PHOTO
+) = range(24)
+
 # --- Constants from Self Bot ---
 FONT_STYLES = {
     "cursive":      {'0':'𝟎','1':'𝟏','2':'𝟐','3':'𝟑','4':'𝟒','5':'𝟓','6':'𝟔','7':'𝟕','8':'𝟖','9':'𝟗',':':':'},
@@ -658,7 +672,7 @@ async def stop_self_bot_due_to_balance(user_id):
 # =======================================================
 #  بخش ۵: سیستم لاگین سلف در ربات اصلی (PTB)
 # =======================================================
-(AWAIT_SELF_CONTACT, AWAIT_SELF_CODE, AWAIT_SELF_PASSWORD) = range(22, 25)
+# (AWAIT_SELF_CONTACT, AWAIT_SELF_CODE, AWAIT_SELF_PASSWORD) removed here as they are defined globally now
 
 async def self_bot_activation_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -864,7 +878,7 @@ async def continue_service_handler(update: Update, context: ContextTypes.DEFAULT
 #  بخش ۷: هندلرهای ادمین (Admin Handlers) - PTB
 # =======================================================
 # (Admin states defined earlier)
-(AWAIT_ADMIN_SELF_COST, AWAIT_ADMIN_SELF_MIN, AWAIT_ADMIN_SELF_PHOTO) = range(25, 28)
+# (AWAIT_ADMIN_SELF_COST, AWAIT_ADMIN_SELF_MIN, AWAIT_ADMIN_SELF_PHOTO) removed here as they are defined globally now
 
 async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_doc = await get_user_async(update.effective_user.id)
@@ -1219,7 +1233,7 @@ def main():
         entry_points=[MessageHandler(filters.Regex("^👑 پنل ادمین$"), admin_panel_entry)],
         states={
             ADMIN_MENU: [
-                MessageHandler(filters.Regex("^(⚙️ هزینه سلف \(ساعتی\)|💎 حداقل موجودی سلف)$"), process_admin_choice),
+                MessageHandler(filters.Regex(r"^(⚙️ هزینه سلف \(ساعتی\)|💎 حداقل موجودی سلف)$"), process_admin_choice),
                 MessageHandler(filters.Regex("^(🖼 تنظیم عکس پنل سلف|🗑 حذف عکس پنل سلف)$"), process_admin_choice),
                 MessageHandler(filters.Regex("^(💳 تنظیم شماره کارت|👤 تنظیم صاحب کارت|مدیریت کاربر)$"), process_admin_choice),
                 MessageHandler(filters.Regex("^(➕ افزودن کانال عضویت|➖ حذف کانال عضویت|🖼 تنظیم عکس شرط)$"), process_admin_choice),

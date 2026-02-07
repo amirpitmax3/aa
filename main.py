@@ -68,7 +68,7 @@ OWNER_ID = 7423552124
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 
 # --- MongoDB Connection ---
-MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://dmkwek:<db_password>@cluster0.swos6wd.mongodb.net/?appName=Cluster0"
 DB_NAME = "telegram_bot_data_merged"
 
 mongo_client = None

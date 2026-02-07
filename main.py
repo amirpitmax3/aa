@@ -68,7 +68,7 @@ OWNER_ID = 7423552124
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 
 # --- MongoDB Connection ---
-MONGO_URI = "mongodb+srv://amirpitmax1_db_user:DvkIhwWzUfBT4L5j@cluster0.kdvbr3p.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
 DB_NAME = "telegram_bot_data_merged"
 
 mongo_client = None
@@ -114,8 +114,10 @@ BOT_USERNAME = ""
  AWAIT_MANAGE_USER_ID, AWAIT_MANAGE_USER_ROLE,
  AWAIT_BROADCAST_MESSAGE,
  AWAIT_SELF_CONTACT, AWAIT_SELF_CODE, AWAIT_SELF_PASSWORD,
- AWAIT_ADMIN_SELF_COST, AWAIT_ADMIN_SELF_MIN, AWAIT_ADMIN_SELF_PHOTO
-) = range(24)
+ AWAIT_ADMIN_SELF_COST, AWAIT_ADMIN_SELF_MIN, AWAIT_ADMIN_SELF_PHOTO,
+ AWAIT_DEPOSIT_AMOUNT, AWAIT_DEPOSIT_RECEIPT,
+ AWAIT_SUPPORT_MESSAGE, AWAIT_ADMIN_SUPPORT_REPLY
+) = range(28)
 
 # --- Constants from Self Bot ---
 FONT_STYLES = {
@@ -650,8 +652,6 @@ async def reply_based_controller(client, message):
                 ORIGINAL_PROFILE_DATA[user_id] = {'first_name': me.first_name, 'bio': me.bio}
                 COPY_MODE_STATUS[user_id] = True
                 CLOCK_STATUS[user_id] = False
-                # No separate saving needed for copy/clock toggle here as CLOCK_STATUS is managed via panel mainly,
-                # but if done via command, we should save.
                 save_self_settings_to_db(user_id)
                 target_photos = [p async for p in client.get_chat_photos(target_id, limit=1)]
                 await client.update_profile(first_name=user.first_name, bio=(user.bio or "")[:70])
@@ -698,7 +698,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         await client.start()
         user_id = (await client.get_me()).id
         if sessions_collection is not None:
-            # Update user_id just in case, but MAINLY load settings
             sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
             doc = sessions_collection.find_one({'phone_number': phone})
             if doc:
@@ -710,7 +709,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     if user_id in ACTIVE_BOTS:
         for t in ACTIVE_BOTS[user_id][1]: t.cancel()
     
-    # If not loaded from DB (new session), set defaults
     if user_id not in USER_FONT_CHOICES:
         USER_FONT_CHOICES[user_id] = font_style
     if user_id not in CLOCK_STATUS:
@@ -898,83 +896,73 @@ async def process_admin_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         "⚙️ هزینه سلف (ساعتی)": "هزینه هر ساعت استفاده از سلف (به الماس) را وارد کنید:",
         "💎 حداقل موجودی سلف": "حداقل موجودی لازم برای روشن کردن سلف را وارد کنید:",
         "🖼 تنظیم عکس پنل سلف": "لطفا عکس جدید برای پنل سلف را ارسال کنید:",
+        "💳 تنظیم شماره کارت": "لطفا شماره کارت جدید را وارد کنید:",
+        "👤 تنظیم صاحب کارت": "لطفا نام صاحب حساب جدید را وارد کنید:",
+        "💰 تنظیم الماس (ست)": "ابتدا آیدی عددی کاربر را وارد کنید:",
+        "➕ افزایش الماس کاربر": "ابتدا آیدی عددی کاربر را برای افزایش الماس وارد کنید:",
+        "➖ کسر الماس کاربر": "ابتدا آیدی عددی کاربر را برای کسر الماس وارد کنید:",
+        "📉 تنظیم مالیات (۰-۱۰۰)": "درصد مالیات (بین ۰ تا ۱۰۰) را وارد کنید:",
+        "📈 تنظیم قیمت الماس": "قیمت جدید هر الماس به تومان را وارد کنید:",
+        "🎁 تنظیم پاداش دعوت": "پاداش هر دعوت موفق به الماس را وارد کنید:",
+        "➕ افزودن کانال عضویت": "یوزرنیم کانال/گروه با @ (مثل @channel) یا لینک کامل را ارسال کنید:",
+        "🖼 تنظیم عکس شرط": "لطفا عکس مورد نظر برای شرط را ارسال کنید.",
+        "📢 پیام همگانی": "لطفا پیام خود را ارسال کنید (متن، عکس، فایل و...).",
+        "مدیریت کاربر": "آیدی عددی کاربر مورد نظر را وارد کنید:"
     }
+    
     if choice in prompts:
         await update.message.reply_text(prompts[choice], reply_markup=ReplyKeyboardRemove())
         if choice == "⚙️ هزینه سلف (ساعتی)": return AWAIT_ADMIN_SELF_COST
         if choice == "💎 حداقل موجودی سلف": return AWAIT_ADMIN_SELF_MIN
         if choice == "🖼 تنظیم عکس پنل سلف": return AWAIT_ADMIN_SELF_PHOTO
-        
-    if choice == "💳 تنظیم شماره کارت":
-        await update.message.reply_text("لطفا شماره کارت جدید را وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_SET_CARD_NUMBER
-    elif choice == "👤 تنظیم صاحب کارت":
-        await update.message.reply_text("لطفا نام صاحب حساب جدید را وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_SET_CARD_HOLDER
-    elif choice == "💰 تنظیم الماس (ست)":
-        await update.message.reply_text("ابتدا آیدی عددی کاربر را وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_SET_BALANCE_ID
-    elif choice == "➕ افزایش الماس کاربر":
-        await update.message.reply_text("ابتدا آیدی عددی کاربر را برای افزایش الماس وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_ADD_BALANCE_ID
-    elif choice == "➖ کسر الماس کاربر":
-        await update.message.reply_text("ابتدا آیدی عددی کاربر را برای کسر الماس وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_DEDUCT_BALANCE_ID
-    elif choice == "📉 تنظیم مالیات (۰-۱۰۰)":
-        await update.message.reply_text("درصد مالیات (بین ۰ تا ۱۰۰) را وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_TAX
-    elif choice == "📈 تنظیم قیمت الماس":
-        await update.message.reply_text("قیمت جدید هر الماس به تومان را وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_CREDIT_PRICE
-    elif choice == "🎁 تنظیم پاداش دعوت":
-        await update.message.reply_text("پاداش هر دعوت موفق به الماس را وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_ADMIN_REFERRAL_PRICE
-    elif choice == "➕ افزودن کانال عضویت":
-        await update.message.reply_text("یوزرنیم کانال/گروه با @ (مثل @channel) یا لینک کامل را ارسال کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_NEW_CHANNEL
-    elif choice == "🖼 تنظیم عکس شرط":
-        await update.message.reply_text("لطفا عکس مورد نظر برای شرط را ارسال کنید.", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_BET_PHOTO
-    elif choice == "📢 پیام همگانی":
-        await update.message.reply_text("لطفا پیام خود را ارسال کنید (متن، عکس، فایل و...).", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_BROADCAST_MESSAGE
-    elif choice == "➖ حذف کانال عضویت":
-        return await show_channels_for_removal(update, context)
-    elif choice == "مدیریت کاربر":
-        await update.message.reply_text("آیدی عددی کاربر مورد نظر را وارد کنید:", reply_markup=ReplyKeyboardRemove())
-        return AWAIT_MANAGE_USER_ID
-    elif choice == "🔒 قفل عضویت: روشن":
+        if choice == "💳 تنظیم شماره کارت": return AWAIT_ADMIN_SET_CARD_NUMBER
+        if choice == "👤 تنظیم صاحب کارت": return AWAIT_ADMIN_SET_CARD_HOLDER
+        if choice == "💰 تنظیم الماس (ست)": return AWAIT_ADMIN_SET_BALANCE_ID
+        if choice == "➕ افزایش الماس کاربر": return AWAIT_ADMIN_ADD_BALANCE_ID
+        if choice == "➖ کسر الماس کاربر": return AWAIT_ADMIN_DEDUCT_BALANCE_ID
+        if choice == "📉 تنظیم مالیات (۰-۱۰۰)": return AWAIT_ADMIN_TAX
+        if choice == "📈 تنظیم قیمت الماس": return AWAIT_ADMIN_CREDIT_PRICE
+        if choice == "🎁 تنظیم پاداش دعوت": return AWAIT_ADMIN_REFERRAL_PRICE
+        if choice == "➕ افزودن کانال عضویت": return AWAIT_NEW_CHANNEL
+        if choice == "🖼 تنظیم عکس شرط": return AWAIT_BET_PHOTO
+        if choice == "📢 پیام همگانی": return AWAIT_BROADCAST_MESSAGE
+        if choice == "مدیریت کاربر": return AWAIT_MANAGE_USER_ID
+
+    # Actions without prompts
+    if choice == "➖ حذف کانال عضویت": return await show_channels_for_removal(update, context)
+    if choice == "🔒 قفل عضویت: روشن":
         await set_setting_async('forced_channel_lock', 'true')
         await update.message.reply_text("✅ قفل عضویت فعال شد.", reply_markup=admin_keyboard)
         return ADMIN_MENU
-    elif choice == "🔓 قفل عضویت: خاموش":
+    if choice == "🔓 قفل عضویت: خاموش":
         await set_setting_async('forced_channel_lock', 'false')
         await update.message.reply_text("❌ قفل عضویت غیرفعال شد.", reply_markup=admin_keyboard)
         return ADMIN_MENU
-    elif choice == "👁‍🗨 لیست کانال‌های عضویت":
+    if choice == "👁‍🗨 لیست کانال‌های عضویت":
         channels = list(GLOBAL_CHANNELS.values())
         msg = "لیست کانال‌ها:\n" + "\n".join([f"{c['channel_title']} ({c['channel_username']})" for c in channels]) if channels else "خالی"
         await update.message.reply_text(msg, reply_markup=admin_keyboard)
         return ADMIN_MENU
-    elif choice == "📊 آمار کلی":
+    if choice == "📊 آمار کلی":
         total_users = len(GLOBAL_USERS)
         pending_tx = sum(1 for tx in GLOBAL_TRANSACTIONS.values() if tx['status'] == 'pending')
         await update.message.reply_text(f"👥 کاربران: {total_users}\n🧾 تراکنش‌های معلق: {pending_tx}", reply_markup=admin_keyboard)
         return ADMIN_MENU
-    elif choice == "🗑 حذف عکس شرط":
+    if choice == "🗑 حذف عکس شرط":
         await set_setting_async('bet_photo_file_id', 'None')
         await update.message.reply_text("✅ عکس حذف شد.", reply_markup=admin_keyboard)
         return ADMIN_MENU
-    elif choice == "🗑 حذف عکس پنل سلف":
+    if choice == "🗑 حذف عکس پنل سلف":
         await set_setting_async('self_panel_photo', 'None')
         await update.message.reply_text("✅ عکس پنل سلف حذف شد.", reply_markup=admin_keyboard)
         return ADMIN_MENU
-    elif choice == "⬅️ بازگشت به منوی اصلی":
+    if choice == "⬅️ بازگشت به منوی اصلی":
         user_doc = await get_user_async(update.effective_user.id)
         await update.message.reply_text("منوی اصلی:", reply_markup=get_main_keyboard(user_doc))
         return ConversationHandler.END
         
-    return AWAIT_ADMIN_REPLY
+    await update.message.reply_text("❌ دستور نامعتبر.", reply_markup=admin_keyboard)
+    return ADMIN_MENU
 
 async def process_admin_self_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1069,26 +1057,95 @@ async def process_manage_user_role(update, context):
 async def process_admin_broadcast(update, context):
     await update.message.reply_text("پیام ارسال شد.", reply_markup=admin_keyboard); return ADMIN_MENU
 
-# --- Common Handlers ---
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Deposit Functions ---
+async def deposit_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("لطفا تعداد الماسی که قصد خرید دارید را وارد کنید:", reply_markup=ReplyKeyboardRemove())
+    return AWAIT_DEPOSIT_AMOUNT
+
+async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        amount = int(update.message.text)
+        if amount <= 0: raise ValueError
+        price_str = await get_setting_async('credit_price')
+        try: price = int(price_str or 1000)
+        except: price = 1000
+        total_cost = amount * price
+        context.user_data['deposit_amount'] = amount
+        card_number = await get_setting_async('card_number') or "تنظیم نشده"
+        card_holder = await get_setting_async('card_holder') or "تنظیم نشده"
+        await update.message.reply_text(f"هزینه قابل پرداخت برای `{amount}` الماس: `{total_cost:,}` تومان\n\nلطفا مبلغ را به کارت زیر واریز کرده و سپس عکس رسید را ارسال کنید:\nشماره کارت: `{card_number}`\nصاحب حساب: `{card_holder}`", parse_mode=ParseMode.MARKDOWN)
+        return AWAIT_DEPOSIT_RECEIPT
+    except (ValueError, TypeError):
+        await update.message.reply_text("❌ لطفا یک عدد صحیح و مثبت وارد کنید.")
+        return AWAIT_DEPOSIT_AMOUNT
+
+async def process_deposit_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global TX_ID_COUNTER
+    if not update.message.photo:
+        await update.message.reply_text("❌ لطفا عکس رسید پرداخت را ارسال کنید.")
+        return AWAIT_DEPOSIT_RECEIPT
+    user = update.effective_user
+    amount = context.user_data['deposit_amount']
+    receipt_file_id = update.message.photo[-1].file_id
+    tx_id = TX_ID_COUNTER
+    GLOBAL_TRANSACTIONS[tx_id] = {
+        'tx_id': tx_id,
+        'user_id': user.id,
+        'amount': amount,
+        'receipt_file_id': receipt_file_id,
+        'status': 'pending',
+        'type': 'diamond',
+        'timestamp': datetime.now(timezone.utc),
+        'admin_messages': []
+    }
+    TX_ID_COUNTER += 1
+    if db is not None:
+        try: db.transactions.replace_one({'tx_id': tx_id}, GLOBAL_TRANSACTIONS[tx_id], upsert=True)
+        except Exception as e: logging.error(f"Error saving tx: {e}")
+    caption = (f"🧾 درخواست افزایش الماس جدید (ID: {tx_id})\nکاربر: {user.mention_html()} (ID: {user.id})\nتعداد الماس: `{amount}`")
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("✅ تایید", callback_data=f"tx_approve_{tx_id}"), InlineKeyboardButton("❌ رد", callback_data=f"tx_reject_{tx_id}")]])
+    try:
+        msg = await context.bot.send_photo(chat_id=OWNER_ID, photo=receipt_file_id, caption=caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        GLOBAL_TRANSACTIONS[tx_id]['admin_messages'].append({'chat_id': OWNER_ID, 'message_id': msg.message_id})
+    except Exception as e: logging.warning(f"Could not send receipt to owner: {e}")
+    user_doc = await get_user_async(user.id)
+    await update.message.reply_text("✅ رسید شما برای ادمین ارسال شد. پس از تایید، الماس شما شارژ خواهد شد.", reply_markup=get_main_keyboard(user_doc))
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# --- Support Functions ---
+async def support_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("لطفا پیام خود را برای ارسال به پشتیبانی بنویسید:", reply_markup=ReplyKeyboardRemove())
+    return AWAIT_SUPPORT_MESSAGE
+
+async def process_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_doc = await get_user_async(user.id)
-    if update.effective_chat.type != 'private':
-        await update.message.reply_text("👋 ربات شرط‌بندی فعال است.", reply_markup=bet_group_keyboard)
-        return
-    await update.message.reply_text("👋 به خدمات مجازی darkself خوش آمدید.", reply_markup=get_main_keyboard(user_doc))
+    text = f"📨 پیام پشتیبانی جدید از کاربر: {user.mention_html()}\n(ID: `{user.id}`)\n\n`{update.message.text}`"
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("✍️ پاسخ به کاربر", callback_data=f"reply_support_{user.id}_{update.message.message_id}")]])
+    try: await context.bot.send_message(chat_id=OWNER_ID, text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    except Exception as e: logging.warning(f"Could not send support message to owner: {e}")
+    await update.message.reply_text("✅ پیام شما با موفقیت برای تیم پشتیبانی ارسال شد.", reply_markup=get_main_keyboard(user_doc))
+    return ConversationHandler.END
 
-async def show_balance(update, context):
-    u = await get_user_async(update.effective_user.id)
-    await update.message.reply_text(f"💰 موجودی: {u['balance']} الماس")
+# --- Admin Reply Functions ---
+async def admin_support_reply_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split('_')
+    target_user_id = int(data[2])
+    context.user_data['reply_to_user'] = target_user_id
+    await query.message.reply_text(f"لطفا پاسخ خود را برای کاربر با آیدی {target_user_id} بنویسید:", reply_markup=ReplyKeyboardRemove())
+    return AWAIT_ADMIN_SUPPORT_REPLY
 
-async def get_referral_link(update, context):
-    link = f"https://t.me/{(await context.bot.get_me()).username}?start={update.effective_user.id}"
-    await update.message.reply_text(f"لینک دعوت: {link}")
-
-async def cancel_conversation(update, context):
-    u = await get_user_async(update.effective_user.id)
-    await update.message.reply_text("لغو شد.", reply_markup=get_main_keyboard(u))
+async def process_admin_support_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    target_user_id = context.user_data.get('reply_to_user')
+    if not target_user_id: return ConversationHandler.END
+    try:
+        await context.bot.send_message(chat_id=target_user_id, text=f"✉️ پاسخ پشتیبانی:\n\n{update.message.text}")
+        await update.message.reply_text("✅ پاسخ شما برای کاربر ارسال شد.", reply_markup=admin_keyboard)
+    except Exception as e: await update.message.reply_text(f"❌ ارسال پیام به کاربر ناموفق بود: {e}", reply_markup=admin_keyboard)
+    context.user_data.clear()
     return ConversationHandler.END
 
 # --- Callback & Inline Handlers ---
@@ -1174,6 +1231,28 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         elif 'cancel' in data: await query.edit_message_text("❌ شرط لغو شد.")
         return
 
+    if data.startswith("tx_"):
+        parts = data.split('_')
+        action = parts[1]
+        tx_id = int(parts[2])
+        tx = GLOBAL_TRANSACTIONS.get(tx_id)
+        if not tx: await query.answer("تراکنش یافت نشد.", show_alert=True); return
+        if tx['status'] != 'pending': await query.answer("قبلا پردازش شده.", show_alert=True); return
+        if action == "approve":
+            tx['status'] = 'approved'
+            u_doc = await get_user_async(tx['user_id'])
+            u_doc['balance'] += tx['amount']
+            save_user_immediate(tx['user_id'])
+            if db is not None: db.transactions.replace_one({'tx_id': tx_id}, tx, upsert=True)
+            await context.bot.send_message(tx['user_id'], f"✅ شارژ {tx['amount']} الماس انجام شد.")
+            await query.edit_message_caption(caption=query.message.caption + "\n\n✅ تایید شد.")
+        elif action == "reject":
+            tx['status'] = 'rejected'
+            if db is not None: db.transactions.replace_one({'tx_id': tx_id}, tx, upsert=True)
+            await context.bot.send_message(tx['user_id'], f"❌ درخواست شارژ رد شد.")
+            await query.edit_message_caption(caption=query.message.caption + "\n\n❌ رد شد.")
+        return
+
 async def start_bet_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global BET_ID_COUNTER
     if not update.message: return
@@ -1186,6 +1265,81 @@ async def start_bet_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ پیوستن", callback_data=f"bet_join_{BET_ID_COUNTER}"), InlineKeyboardButton("❌ لغو شرط", callback_data=f"bet_cancel_{BET_ID_COUNTER}")]])
     BET_ID_COUNTER += 1
     await update.message.reply_text(text, reply_markup=kb)
+
+async def group_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message: return
+    sender = update.effective_user
+    target_user = sender
+    reply_to_message = update.message.reply_to_message
+    if reply_to_message and reply_to_message.from_user:
+        sender_doc = await get_user_async(sender.id)
+        if sender_doc.get('is_admin') or sender_doc.get('is_moderator') or sender_doc.get('is_owner'):
+            target_user = reply_to_message.from_user
+    target_user_doc = await get_user_async(target_user.id)
+    price_str = await get_setting_async('credit_price')
+    try: price = int(price_str or 1000)
+    except: price = 1000
+    toman_value = target_user_doc['balance'] * price
+    target_display_name = get_user_display_name(target_user)
+    text = (f"👤 کاربر: {target_display_name}\n💰 موجودی الماس: {target_user_doc['balance']:,}\n💳 معادل تخمینی: {toman_value:,.0f} تومان")
+    await update.message.reply_text(text)
+
+async def transfer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.reply_to_message or not update.message.reply_to_message.from_user:
+        await update.message.reply_text("⚠️ برای انتقال باید روی پیام کاربر مورد نظر ریپلای کنید.")
+        return
+    sender = update.effective_user
+    receiver = update.message.reply_to_message.from_user
+    try:
+        match = re.search(r'(\d+)', update.message.text)
+        if not match: return
+        amount = int(match.group(1))
+        if amount <= 0: await update.message.reply_text("تعداد الماس انتقال باید مثبت باشد."); return
+    except: await update.message.reply_text("خطا در خواندن تعداد."); return 
+    try:
+        sender_doc = await get_user_async(sender.id)
+        if sender.id == receiver.id: await update.message.reply_text("انتقال به خود امکان‌پذیر نیست."); return
+        if sender_doc['balance'] < amount: await update.message.reply_text("موجودی الماس شما کافی نیست."); return
+        receiver_doc = await get_user_async(receiver.id)
+        sender_doc['balance'] -= amount
+        receiver_doc['balance'] += amount
+        save_user_immediate(sender.id)
+        save_user_immediate(receiver.id)
+        sender_display_name = get_user_display_name(sender)
+        receiver_display_name = get_user_display_name(receiver)
+        text = (f"✅ انتقال موفق ✅\n\n👤 از: {sender_display_name}\n👥 به: {receiver_display_name}\n💰 تعداد: {amount:,} الماس")
+        await update.message.reply_text(text)
+    except Exception as e: logging.error(f"Error during transfer: {e}"); await update.message.reply_text("خطایی در هنگام انتقال رخ داد.")
+
+async def show_bet_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("منوی شرط:", reply_markup=bet_group_keyboard)
+
+async def deduct_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.reply_to_message: return
+    admin_user = update.effective_user
+    admin_doc = await get_user_async(admin_user.id)
+    if not (admin_doc.get('is_admin') or admin_doc.get('is_moderator') or admin_doc.get('is_owner')): return
+    target_user = update.message.reply_to_message.from_user
+    if target_user.id == admin_user.id: await update.message.reply_text("شما نمی‌توانید از خودتان الماس کسر کنید."); return
+    if target_user.id == OWNER_ID: await update.message.reply_text("شما نمی‌توانید از مالک اصلی الماس کسر کنید."); return
+    match = re.search(r'(\d+)', update.message.text)
+    if not match: await update.message.reply_text("لطفا مقدار عددی برای کسر را مشخص کنید."); return
+    try:
+        amount_to_deduct = int(match.group(1))
+        if amount_to_deduct <= 0: await update.message.reply_text("مقدار کسر باید یک عدد مثبت باشد."); return
+    except: await update.message.reply_text("مقدار وارد شده نامعتبر است."); return
+    target_doc = await get_user_async(target_user.id)
+    if target_doc.get('balance', 0) < amount_to_deduct: await update.message.reply_text(f"کاربر موجودی کافی ندارد."); return
+    target_doc['balance'] -= amount_to_deduct
+    save_user_immediate(target_user.id)
+    admin_display_name = get_user_display_name(admin_user)
+    tehran_time = datetime.now(TEHRAN_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+    receipt_text = (f"❌ {amount_to_deduct:,} الماس کسر شد.\n🧾 رسید:\n📤 ادمین: {admin_display_name}\n📥 کاربر: {get_user_display_name(target_user)}\n⏰ {tehran_time}")
+    await update.message.reply_text(receipt_text)
+
+# =======================================================
+#  بخش ۸: اجرای اصلی
+# =======================================================
 
 async def post_init(application: Application):
     global BOT_USERNAME
@@ -1233,19 +1387,42 @@ def main():
     )
     application.add_handler(self_conv)
 
+    deposit_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^💳 افزایش الماس$"), deposit_entry)],
+        states={
+            AWAIT_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)],
+            AWAIT_DEPOSIT_RECEIPT: [MessageHandler(filters.PHOTO, process_deposit_receipt)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)],
+        allow_reentry=True
+    )
+    application.add_handler(deposit_conv)
+
+    support_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^💬 پشتیبانی$"), support_entry)],
+        states={
+            AWAIT_SUPPORT_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_support_message)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)],
+        allow_reentry=True
+    )
+    application.add_handler(support_conv)
+
+    admin_reply_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_support_reply_entry, pattern="^reply_support_")],
+        states={
+            AWAIT_ADMIN_SUPPORT_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_admin_support_reply)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)],
+        per_message=False
+    )
+    application.add_handler(admin_reply_conv)
+
     admin_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^👑 پنل ادمین$"), admin_panel_entry)],
         states={
             ADMIN_MENU: [
-                MessageHandler(filters.Regex(r"^(⚙️ هزینه سلف \(ساعتی\)|💎 حداقل موجودی سلف)$"), process_admin_choice),
-                MessageHandler(filters.Regex("^(🖼 تنظیم عکس پنل سلف|🗑 حذف عکس پنل سلف)$"), process_admin_choice),
-                MessageHandler(filters.Regex("^(💳 تنظیم شماره کارت|👤 تنظیم صاحب کارت|مدیریت کاربر)$"), process_admin_choice),
-                MessageHandler(filters.Regex("^(➕ افزودن کانال عضویت|➖ حذف کانال عضویت|🖼 تنظیم عکس شرط)$"), process_admin_choice),
-                MessageHandler(filters.Regex(r"^(💰 تنظیم الماس \(ست\)|➕ افزایش الماس کاربر|➖ کسر الماس کاربر|📈 تنظیم قیمت الماس|🎁 تنظیم پاداش دعوت|📉 تنظیم مالیات \(۰-۱۰۰\))$"), process_admin_choice),
-                MessageHandler(filters.Regex("^(👁‍🗨 لیست کانال‌های عضویت|📊 آمار کلی|🗑 حذف عکس شرط)$"), process_admin_choice),
-                MessageHandler(filters.Regex("^(🔒 قفل عضویت: روشن|🔓 قفل عضویت: خاموش)$"), process_admin_choice),
-                MessageHandler(filters.Regex("^(📢 پیام همگانی)$"), process_admin_choice),
-                MessageHandler(filters.Regex("^⬅️ بازگشت به منوی اصلی$"), process_admin_choice),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_admin_choice),
             ],
             AWAIT_ADMIN_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_admin_reply)],
             AWAIT_ADMIN_SELF_COST: [MessageHandler(filters.TEXT, process_admin_self_cost)],

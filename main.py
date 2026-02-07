@@ -1166,6 +1166,146 @@ async def start_bet_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BET_ID_COUNTER += 1
     await update.message.reply_text(text, reply_markup=kb)
 
+# --- NEW GROUP HANDLERS (ADDED BACK) ---
+async def group_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles 'موجودی' in groups."""
+    if not update.message: return
+
+    sender = update.effective_user
+    target_user = sender
+    reply_to_message = update.message.reply_to_message
+
+    if reply_to_message and reply_to_message.from_user:
+        sender_doc = await get_user_async(sender.id)
+        if sender_doc.get('is_admin') or sender_doc.get('is_moderator') or sender_doc.get('is_owner'):
+            target_user = reply_to_message.from_user
+
+    target_user_doc = await get_user_async(target_user.id)
+    price_str = await get_setting_async('credit_price')
+    try:
+        price = int(price_str or 1000)
+    except (ValueError, TypeError):
+        price = 1000
+    toman_value = target_user_doc['balance'] * price
+
+    target_display_name = get_user_display_name(target_user)
+    text = (
+        f"👤 کاربر: {target_display_name}\n"
+        f"💰 موجودی الماس: {target_user_doc['balance']:,}\n"
+        f"💳 معادل تخمینی: {toman_value:,.0f} تومان"
+    )
+    await update.message.reply_text(text)
+
+async def transfer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles credit transfers in groups (reply with 'انتقال 100')."""
+    if not update.message or not update.message.reply_to_message or not update.message.reply_to_message.from_user:
+        await update.message.reply_text("⚠️ برای انتقال باید روی پیام کاربر مورد نظر ریپلای کنید.")
+        return
+
+    sender = update.effective_user
+    receiver = update.message.reply_to_message.from_user
+
+    try:
+        match = re.search(r'(\d+)', update.message.text)
+        if not match:
+            return
+        amount = int(match.group(1))
+        if amount <= 0:
+            await update.message.reply_text("تعداد الماس انتقال باید مثبت باشد.")
+            return
+    except (ValueError, TypeError):
+        await update.message.reply_text("خطا در خواندن تعداد.")
+        return 
+
+    try:
+        sender_doc = await get_user_async(sender.id)
+
+        if sender.id == receiver.id:
+            await update.message.reply_text("انتقال به خود امکان‌پذیر نیست.")
+            return
+
+        if sender_doc['balance'] < amount:
+            await update.message.reply_text("موجودی الماس شما کافی نیست.")
+            return
+
+        receiver_doc = await get_user_async(receiver.id)
+
+        sender_doc['balance'] -= amount
+        receiver_doc['balance'] += amount
+        save_user_immediate(sender.id)
+        save_user_immediate(receiver.id)
+
+        sender_display_name = get_user_display_name(sender)
+        receiver_display_name = get_user_display_name(receiver)
+
+        text = (
+            f"✅ انتقال موفق ✅\n\n"
+            f"👤 از: {sender_display_name}\n"
+            f"👥 به: {receiver_display_name}\n"
+            f"💰 تعداد: {amount:,} الماس"
+        )
+        await update.message.reply_text(text)
+    except Exception as e:
+        logging.error(f"Error during transfer: {e}")
+        await update.message.reply_text("خطایی در هنگام انتقال رخ داد.")
+
+async def show_bet_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends the quick bet reply keyboard in groups."""
+    await update.message.reply_text("منوی شرط:", reply_markup=bet_group_keyboard)
+
+async def deduct_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles admin 'کسر' command in groups."""
+    if not update.message or not update.message.reply_to_message:
+        return
+
+    admin_user = update.effective_user
+    admin_doc = await get_user_async(admin_user.id)
+    if not (admin_doc.get('is_admin') or admin_doc.get('is_moderator') or admin_doc.get('is_owner')):
+        return
+
+    target_user = update.message.reply_to_message.from_user
+    if target_user.id == admin_user.id:
+        await update.message.reply_text("شما نمی‌توانید از خودتان الماس کسر کنید.")
+        return
+    if target_user.id == OWNER_ID:
+        await update.message.reply_text("شما نمی‌توانید از مالک اصلی الماس کسر کنید.")
+        return
+
+    match = re.search(r'(\d+)', update.message.text)
+    if not match:
+        await update.message.reply_text("لطفا مقدار عددی برای کسر را مشخص کنید. مثال: کسر 500")
+        return
+
+    try:
+        amount_to_deduct = int(match.group(1))
+        if amount_to_deduct <= 0:
+            await update.message.reply_text("مقدار کسر باید یک عدد مثبت باشد.")
+            return
+    except (ValueError, TypeError):
+        await update.message.reply_text("مقدار وارد شده نامعتبر است.")
+        return
+
+    target_doc = await get_user_async(target_user.id)
+    target_display_name = get_user_display_name(target_user)
+    if target_doc.get('balance', 0) < amount_to_deduct:
+        await update.message.reply_text(f"کاربر {target_display_name} موجودی کافی برای کسر {amount_to_deduct:,} الماس را ندارد.")
+        return
+
+    target_doc['balance'] -= amount_to_deduct
+    save_user_immediate(target_user.id)
+    
+    admin_display_name = get_user_display_name(admin_user)
+    tehran_time = datetime.now(TEHRAN_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+    receipt_text = (
+        f"❌ {amount_to_deduct:,} الماس از {target_display_name} کسر شد.\n"
+        f"🧾 رسید کسر:\n"
+        f"📤 ادمین/مادریتور: {admin_display_name}\n"
+        f"📥 کاربر: {target_display_name}\n"
+        f"💰 تعداد: {amount_to_deduct:,}\n"
+        f"⏰ {tehran_time}"
+    )
+    await update.message.reply_text(receipt_text)
+
 # =======================================================
 #  بخش ۸: اجرای اصلی
 # =======================================================
@@ -1273,7 +1413,12 @@ def main():
     application.add_handler(admin_conv)
     
     # Bet Group Handlers
+    application.add_handler(MessageHandler(filters.Regex(r'^(شرط|بت)$') & filters.ChatType.GROUPS, show_bet_keyboard_handler))
     application.add_handler(MessageHandler(filters.Regex(r'^(شرطبندی|شرط) \d+$') & filters.ChatType.GROUPS, start_bet_handler))
+    application.add_handler(MessageHandler(filters.Regex(r'^(انتقال|transfer)\s+(\d+)$') & filters.REPLY & filters.ChatType.GROUPS, transfer_handler))
+    application.add_handler(MessageHandler(filters.Regex(r'^موجودی$') & filters.ChatType.GROUPS, group_balance_handler))
+    application.add_handler(MessageHandler(filters.Regex(r'^(کسر اعتبار|کسر) \d+$') & filters.REPLY & filters.ChatType.GROUPS, deduct_balance_handler))
+    application.add_handler(MessageHandler(filters.Regex(r'^موجودی 💰$') & filters.ChatType.GROUPS, group_balance_handler))
 
     application.add_handler(CallbackQueryHandler(callback_query_handler))
 

@@ -88,7 +88,7 @@ BOT_TOKEN = "8322502049:AAHf1U3Wj4CIJU8VyDDKeDd9aNVUkOpnWWs"
 SECRET_SAVE_BOT = None  # Will be initialized with Bot client
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://ourbitpitmax878_db_user:5XnjkEGcXavZLkEv@cluster0.quo21q3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 mongo_client = None
 sessions_collection = None
 learning_collection = None

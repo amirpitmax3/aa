@@ -84,7 +84,7 @@ def _is_allowed_phone(phone: str) -> bool:
         return False
 
 # --- Bot Token for Secret Save ---
-BOT_TOKEN = "8322502049:AAHf1U3Wj4CIJU8VyDDKeDd9aNVUkOpnWWs"
+BOT_TOKEN = "8272668913:AAEleT0kciRSM-IId7amI7SA2iQ5KMC4DTI"
 SECRET_SAVE_BOT = None  # Will be initialized with Bot client
 
 # --- Database Setup (MongoDB) ---

@@ -10,3 +10,4 @@ jdatetime==4.1.0
 TgCrypto==1.2.5
 aiofiles
 numpy
+matplotlib

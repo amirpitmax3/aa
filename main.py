@@ -17,7 +17,7 @@ from pyrogram.raw import functions
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
     PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, UserDeactivated, AuthKeyUnregistered,
-    ReactionInvalid, MessageIdInvalid, ChatSendInlineForbidden
+    ReactionInvalid, MessageIdInvalid, ChatSendInlineForbidden, ApiIdInvalid, AccessTokenInvalid
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -62,13 +62,19 @@ API_ID = 28190856
 API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 
 # 🔴🔴🔴 توکن ربات منیجر 🔴🔴🔴
-BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
+# BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU"  # این توکن مشکل داره یا ریپورت شده
+BOT_TOKEN = "8272668913:AAEleT0kciRSM-IId7amI7SA2iQ5KMC4DTI"  # یه ربات جدید بساز و توکن جدید بذار اینجا!
+
+# 🔴🔴🔴 نام کاربری ربات منیجر (بدون @) 🔴🔴🔴
+MANAGER_BOT_USERNAME = "Jsnsnsnn_bot"  # نام کاربری ربات جدید رو اینجا بذار!
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://oubitpitmax878_db_user:5XnjkEGcXavZLkEv@cluster0.quo21q3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+# اگه مونگو نمیخوای استفاده کنی، اینو خالی بذار
+MONGO_URI = "mongodb+srv://oubitpitmax878_db_user:5XnjkEGcXavZLkEv@cluster0.quo21q3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"  # موقتاً غیرفعال
 mongo_client = None
 sessions_collection = None
-if MONGO_URI and "<db_password>" not in MONGO_URI:
+
+if MONGO_URI and "<db_password>" not in MONGO_URI and MONGO_URI.strip():
     try:
         mongo_client = MongoClient(MONGO_URI, server_api=ServerApi('1'), tlsCAFile=certifi.where())
         mongo_client.admin.command('ping')
@@ -80,7 +86,7 @@ if MONGO_URI and "<db_password>" not in MONGO_URI:
         mongo_client = None
         sessions_collection = None
 else:
-    logging.warning("MONGO_URI is not configured correctly.")
+    logging.warning("MongoDB is not configured or disabled.")
 
 # --- Application Variables ---
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
@@ -97,7 +103,7 @@ FONT_STYLES = {
     "monospace":    {'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
     "normal":       {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
     "circled":      {'0':'⓪','1':'①','2':'②','3':'③','4':'④','5':'⑤','6':'⑥','7':'⑦','8':'⑧','9':'⑨',':':'∶'},
-    "fullwidth":    {'0':'０','1':'１','2':'２','3':'３','4':'４','5':'５','6':'６','7':'７','8':'۸','9':'۹',':':'：'},
+    "fullwidth":    {'0':'０','1':'１','2':'２','3':'۳','4':'۴','5':'۵','6':'۶','7':'۷','8':'۸','9':'۹',':':'：'},
     "filled":       {'0':'⓿','1':'❶','2':'❷','3':'❸','4':'❹','5':'❺','6':'❻','7':'❼','8':'❽','9':'❾',':':':'},
     "sans":         {'0':'𝟢','1':'𝟣','2':'𝟤','3':'𝟥','4':'𝟦','5':'𝟧','6':'𝟨','7':'𝟩','8':'𝟪','9':'𝟫',':':':'},
     "inverted":     {'0':'0','1':'Ɩ','2':'ᄅ','3':'Ɛ','4':'ㄣ','5':'ϛ','6':'9','7':'ㄥ','8':'8','9':'6',':':':'},
@@ -349,7 +355,7 @@ def get_panel_photo(user_id):
 
 def set_panel_photo_db(user_id, file_id):
     if sessions_collection is not None:
-        sessions_collection.update_one({'user_id': user_id}, {'$set': {'panel_photo': file_id}}, upsert=False)
+        sessions_collection.update_one({'user_id': user_id}, {'$set': {'panel_photo': file_id}}, upsert=True)
 
 def del_panel_photo_db(user_id):
     if sessions_collection is not None:
@@ -484,12 +490,14 @@ async def help_controller(client, message):
     try: await message.edit_text(HELP_TEXT)
     except: await message.reply_text(HELP_TEXT)
 
+# ✅ FIX: Panel Command Controller
 async def panel_command_controller(client, message):
-    bot_username = "None"
+    if not MANAGER_BOT_USERNAME:
+        await message.edit_text("❌ نام کاربری ربات منیجر تنظیم نشده است!")
+        return
+    
     try:
-        bot_info = await manager_bot.get_me()
-        bot_username = bot_info.username
-        results = await client.get_inline_bot_results(bot_username, "panel")
+        results = await client.get_inline_bot_results(MANAGER_BOT_USERNAME, "panel")
         if results and results.results:
             await message.delete()
             await client.send_inline_bot_result(message.chat.id, results.query_id, results.results[0].id)
@@ -498,17 +506,29 @@ async def panel_command_controller(client, message):
     except ChatSendInlineForbidden:
         await message.edit_text("🚫 در این چت اجازه ارسال پنل بصورت اینلاین وجود ندارد. لطفاً در پیوی یا پیام‌های ذخیره شده تست کنید.")
     except Exception as e:
-        try: await message.edit_text(f"❌ خطا در لود پنل: {e}\n\n⚠️ از استارت بودن @{bot_username} مطمئن شوید.")
+        try: await message.edit_text(f"❌ خطا در لود پنل: {e}\n\n⚠️ از استارت بودن @{MANAGER_BOT_USERNAME} مطمئن شوید.")
         except: pass
 
+# ✅ FIX: Photo Setting Controller
 async def photo_setting_controller(client, message):
     user_id = client.me.id
-    if message.text == "تنظیم عکس" and message.reply_to_message and message.reply_to_message.photo:
-        set_panel_photo_db(user_id, message.reply_to_message.photo.file_id)
-        await message.edit_text("✅ عکس پنل ذخیره شد.")
+    if message.text == "تنظیم عکس" and message.reply_to_message:
+        if message.reply_to_message.photo:
+            file_id = message.reply_to_message.photo.file_id
+            media_type = "عکس"
+        elif message.reply_to_message.video:
+            file_id = message.reply_to_message.video.file_id
+            media_type = "ویدیو"
+        else:
+            await message.edit_text("❌ فقط عکس یا ویدیو قابل تنظیم است.")
+            return
+        
+        set_panel_photo_db(user_id, file_id)
+        await message.edit_text(f"✅ {media_type} پنل ذخیره شد.")
+    
     elif message.text == "حذف عکس":
         del_panel_photo_db(user_id)
-        await message.edit_text("🗑 عکس پنل حذف شد.")
+        await message.edit_text("🗑 عکس/ویدیوی پنل حذف شد.")
 
 async def reply_based_controller(client, message):
     user_id = client.me.id
@@ -544,24 +564,36 @@ async def reply_based_controller(client, message):
                 await message.delete()
             else:
                 await message.edit_text("❌ خطا در تولید ویس")
+    
+    # ✅ FIX: Leave All Groups/Channels with limit
     elif cmd == "خروج از همه گروه‌ها":
         count = 0
-        async for dialog in client.get_dialogs():
+        limit = 200
+        async for dialog in client.get_dialogs(limit=limit):
             if dialog.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
                 try:
                     await client.leave_chat(dialog.chat.id)
                     count += 1
+                    await asyncio.sleep(0.5)
+                except FloodWait as e:
+                    await asyncio.sleep(e.value)
                 except: pass
-        await message.edit_text(f"✅ از {count} گروه خارج شدید")
+        await message.edit_text(f"✅ از {count} گروه خارج شدید (از حداکثر {limit})")
+    
     elif cmd == "خروج از همه کانال‌ها":
         count = 0
-        async for dialog in client.get_dialogs():
+        limit = 200
+        async for dialog in client.get_dialogs(limit=limit):
             if dialog.chat.type == ChatType.CHANNEL:
                 try:
                     await client.leave_chat(dialog.chat.id)
                     count += 1
+                    await asyncio.sleep(0.5)
+                except FloodWait as e:
+                    await asyncio.sleep(e.value)
                 except: pass
-        await message.edit_text(f"✅ از {count} کانال خارج شدید")
+        await message.edit_text(f"✅ از {count} کانال خارج شدید (از حداکثر {limit})")
+    
     elif message.reply_to_message:
         target_id = message.reply_to_message.from_user.id if message.reply_to_message.from_user else None
         if cmd.startswith("حذف "):
@@ -668,23 +700,27 @@ async def extended_commands_handler(client, message):
     elif cmd == ".ارسال همگانی پیوی":
         if message.reply_to_message:
             count = 0
-            async for dialog in client.get_dialogs():
+            async for dialog in client.get_dialogs(limit=100):
                 if dialog.chat.type == ChatType.PRIVATE and not dialog.chat.is_bot:
                     try:
                         await message.reply_to_message.copy(dialog.chat.id)
                         count += 1
                         await asyncio.sleep(1)
+                    except FloodWait as e:
+                        await asyncio.sleep(e.value)
                     except: pass
             await message.edit_text(f"✅ به {count} پیوی ارسال شد")
     elif cmd == ".ارسال همگانی گروه":
         if message.reply_to_message:
             count = 0
-            async for dialog in client.get_dialogs():
+            async for dialog in client.get_dialogs(limit=100):
                 if dialog.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
                     try:
                         await message.reply_to_message.copy(dialog.chat.id)
                         count += 1
                         await asyncio.sleep(1)
+                    except FloodWait as e:
+                        await asyncio.sleep(e.value)
                     except: pass
             await message.edit_text(f"✅ به {count} گروه ارسال شد")
     elif cmd == ".لینک گروه":
@@ -708,6 +744,8 @@ async def extended_commands_handler(client, message):
             await message.edit_text("✅ از گروه خارج شدید")
         except Exception as e:
             await message.edit_text(f"❌ خطا: {e}")
+    
+    # ✅ FIX: First Comment - تا وقتی خاموش نکردم کار کنه
     elif cmd.startswith(".کامنت اول "):
         state = cmd.replace(".کامنت اول ", "").strip()
         if state in ["روشن", "خاموش"]:
@@ -715,12 +753,14 @@ async def extended_commands_handler(client, message):
                 FIRST_COMMENT_STATUS[user_id] = message.chat.id
                 await message.edit_text(f"✅ کامنت اول روشن شد برای چت: {message.chat.title or message.chat.id}")
             else:
-                FIRST_COMMENT_STATUS[user_id] = None
+                FIRST_COMMENT_STATUS.pop(user_id, None)
                 await message.edit_text("✅ کامنت اول خاموش شد")
+    
     elif cmd == ".تنظیم کامنت" and message.reply_to_message:
         text = message.reply_to_message.text or ""
         FIRST_COMMENT_TEXT[user_id] = text
         await message.edit_text("✅ متن کامنت اول تنظیم شد")
+    
     elif cmd.startswith(".قفل پیوی "):
         state = cmd.replace(".قفل پیوی ", "").strip()
         if state in ["روشن", "خاموش"]:
@@ -740,40 +780,22 @@ async def autosave_handler(client, message):
     user_id = client.me.id
     if not AUTO_SAVE_STATUS.get(user_id, False):
         return
-    # فقط پیوی‌های شخصی (نه ربات‌ها، نه خودم)
     if not message.chat or message.chat.type != ChatType.PRIVATE:
         return
     if not message.from_user or message.from_user.is_self or message.from_user.is_bot:
         return
     
-    # چک کن قبلاً سیو نشده باشه
     msg_key = f"{message.chat.id}_{message.id}"
     seen = AUTO_SEEN_MESSAGES.get(user_id, set())
     if msg_key in seen:
         return
     
     try:
-        # هر عکس یا فیلمی رو سیو کن
-        if message.photo:
+        if message.photo or message.video or message.voice or message.video_note:
             await message.forward("me")
             seen.add(msg_key)
             AUTO_SEEN_MESSAGES[user_id] = seen
-            logging.info(f"Auto-saved photo from {message.chat.id}")
-        elif message.video:
-            await message.forward("me")
-            seen.add(msg_key)
-            AUTO_SEEN_MESSAGES[user_id] = seen
-            logging.info(f"Auto-saved video from {message.chat.id}")
-        elif message.voice:
-            await message.forward("me")
-            seen.add(msg_key)
-            AUTO_SEEN_MESSAGES[user_id] = seen
-            logging.info(f"Auto-saved voice from {message.chat.id}")
-        elif message.video_note:
-            await message.forward("me")
-            seen.add(msg_key)
-            AUTO_SEEN_MESSAGES[user_id] = seen
-            logging.info(f"Auto-saved video note from {message.chat.id}")
+            logging.info(f"Auto-saved media from {message.chat.id}")
     except Exception as e:
         logging.error(f"Auto-save error: {e}")
 
@@ -794,6 +816,7 @@ async def monshi2_handler(client, message):
         await message.reply_text(f"⚠️ برای ارتباط با من ابتدا در کانال زیر عضو شوید:\n{channel}")
         await message.delete()
 
+# ✅ FIX: Tabchi Auto Send Task
 async def tabchi_auto_send_task(client: Client, user_id: int):
     while user_id in ACTIVE_BOTS:
         try:
@@ -802,43 +825,71 @@ async def tabchi_auto_send_task(client: Client, user_id: int):
             # Send to PVs
             if cfg.get('pv_auto', False) and cfg.get('pv_banner'):
                 pv_timer = cfg.get('pv_timer', 60)
-                async for dialog in client.get_dialogs():
+                pv_count = 0
+                async for dialog in client.get_dialogs(limit=100):
                     if dialog.chat.type == ChatType.PRIVATE and not dialog.chat.is_bot:
                         try:
                             await client.send_message(dialog.chat.id, cfg['pv_banner'])
-                            await asyncio.sleep(pv_timer)
-                        except: pass
+                            pv_count += 1
+                            await asyncio.sleep(1)
+                        except FloodWait as e:
+                            await asyncio.sleep(e.value)
+                        except:
+                            pass
+                logging.info(f"Tabchi PV: {pv_count} messages sent, waiting {pv_timer}s")
+                await asyncio.sleep(pv_timer)
             
             # Send to Groups
             if cfg.get('gp_auto', False) and cfg.get('gp_banner'):
                 gp_timer = cfg.get('gp_timer', 60)
-                async for dialog in client.get_dialogs():
+                gp_count = 0
+                async for dialog in client.get_dialogs(limit=100):
                     if dialog.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
                         try:
                             await client.send_message(dialog.chat.id, cfg['gp_banner'])
-                            await asyncio.sleep(gp_timer)
-                        except: pass
+                            gp_count += 1
+                            await asyncio.sleep(1)
+                        except FloodWait as e:
+                            await asyncio.sleep(e.value)
+                        except:
+                            pass
+                logging.info(f"Tabchi Group: {gp_count} messages sent, waiting {gp_timer}s")
+                await asyncio.sleep(gp_timer)
             
             await asyncio.sleep(10)
-        except Exception:
+        except Exception as e:
+            logging.error(f"Tabchi error: {e}")
             await asyncio.sleep(60)
 
+# ✅ FIX: First Comment Handler - تا وقتی خاموش نکردم کار کنه
 async def first_comment_handler(client, message):
     user_id = client.me.id
-    enabled_chat = FIRST_COMMENT_STATUS.get(user_id)
-    if not enabled_chat:
+    
+    # اگه کامنت اول خاموشه یا تنظیم نشده
+    if user_id not in FIRST_COMMENT_STATUS:
         return
+    
+    enabled_chat = FIRST_COMMENT_STATUS.get(user_id)
+    if enabled_chat is None:
+        return
+    
+    # فقط برای چت مشخص شده
     if message.chat.id != enabled_chat:
         return
+    
+    # پیام خودم نباشه
     if message.from_user and message.from_user.is_self:
         return
     
+    # متن کامنت اول تنظیم شده باشه
     text = FIRST_COMMENT_TEXT.get(user_id)
     if not text:
         return
     
     try:
         await message.reply_text(text)
+        logging.info(f"First comment sent to {message.chat.id}")
+        # ✅ حذف نشد! فقط لاگ می‌کنیم و ادامه می‌دیم
     except Exception as e:
         logging.error(f"First comment error: {e}")
 
@@ -847,9 +898,10 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection is not None:  # ✅ FIX: Check with 'is not None'
-            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
-    except: 
+        if sessions_collection is not None:
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}}, upsert=True)
+    except Exception as e:
+        logging.error(f"Failed to start bot for {phone}: {e}")
         return
 
     if user_id in ACTIVE_BOTS:
@@ -859,7 +911,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     USER_FONT_CHOICES[user_id] = font_style
     CLOCK_STATUS[user_id] = not disable_clock
     
-    client.add_handler(MessageHandler(lambda c, m: m.delete() if PV_LOCK_STATUS.get(c.me.id) else None, filters.private & ~filters.me & ~filters.bot), group=-5)
+    client.add_handler(MessageHandler(lambda c, m: m.delete() if PV_LOCK_STATUS.get(c.me.id) and m.chat.type == ChatType.PRIVATE else None, filters.private & ~filters.me & ~filters.bot), group=-5)
     client.add_handler(MessageHandler(lambda c, m: c.read_chat_history(m.chat.id) if AUTO_SEEN_STATUS.get(c.me.id) else None, filters.private & ~filters.me), group=-4)
     client.add_handler(MessageHandler(incoming_message_manager, filters.all & ~filters.me), group=-3)
     client.add_handler(MessageHandler(autosave_handler, filters.private & ~filters.me & ~filters.bot & (filters.photo | filters.video | filters.voice | filters.video_note)), group=-2)
@@ -881,11 +933,21 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         asyncio.create_task(tabchi_auto_send_task(client, user_id))
     ]
     ACTIVE_BOTS[user_id] = (client, tasks)
+    logging.info(f"Bot instance started for user {user_id}")
 
 # =======================================================
-# 🤖 MANAGER BOT
+# 🤖 MANAGER BOT - فقط اگه توکن و نام کاربری تنظیم شده باشه
 # =======================================================
-manager_bot = Client("manager_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+manager_bot = None
+if BOT_TOKEN and MANAGER_BOT_USERNAME:
+    try:
+        manager_bot = Client("manager_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+        logging.info("Manager bot configured successfully.")
+    except Exception as e:
+        logging.error(f"Failed to configure manager bot: {e}")
+        manager_bot = None
+else:
+    logging.warning("Manager bot is disabled. Set BOT_TOKEN and MANAGER_BOT_USERNAME to enable.")
 
 def generate_panel_markup(user_id):
     s_clock = "✅" if CLOCK_STATUS.get(user_id, True) else "❌"
@@ -940,190 +1002,195 @@ def generate_panel_markup(user_id):
         [InlineKeyboardButton("بستن پنل ❌", callback_data=f"close_panel_{user_id}")]
     ])
 
-@manager_bot.on_inline_query()
-async def inline_panel_handler(client, query):
-    user_id = query.from_user.id
-    if query.query == "panel":
-        photo_id = get_panel_photo(user_id)
-        if photo_id:
-            result = InlineQueryResultPhoto(
-                photo_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg", thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg",
-                photo_file_id=photo_id, caption=f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار",
-                reply_markup=generate_panel_markup(user_id)
-            )
-        else:
-            result = InlineQueryResultArticle(
-                title="پنل مدیریت", input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"),
-                reply_markup=generate_panel_markup(user_id), thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
-            )
-        await query.answer([result], cache_time=0)
-
-@manager_bot.on_callback_query()
-async def callback_panel_handler(client, callback):
-    data = callback.data.split("_")
-    action = "_".join(data[:-1])
-    target_user_id = int(data[-1])
-    if callback.from_user.id != target_user_id:
-        await callback.answer("⛔️ دسترسی غیرمجاز!", show_alert=True); return
-
-    if action == "toggle_clock":
-        new_state = not CLOCK_STATUS.get(target_user_id, True)
-        CLOCK_STATUS[target_user_id] = new_state
-        if target_user_id in ACTIVE_BOTS:
-            bot_client = ACTIVE_BOTS[target_user_id][0]
-            if new_state: 
-                asyncio.create_task(perform_clock_update_now(bot_client, target_user_id))
+if manager_bot:
+    @manager_bot.on_inline_query()
+    async def inline_panel_handler(client, query):
+        user_id = query.from_user.id
+        if query.query == "panel":
+            photo_id = get_panel_photo(user_id)
+            if photo_id:
+                result = InlineQueryResultPhoto(
+                    photo_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg", 
+                    thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg",
+                    photo_file_id=photo_id, 
+                    caption=f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار",
+                    reply_markup=generate_panel_markup(user_id)
+                )
             else:
+                result = InlineQueryResultArticle(
+                    title="پنل مدیریت", 
+                    input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"),
+                    reply_markup=generate_panel_markup(user_id), 
+                    thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
+                )
+            await query.answer([result], cache_time=0)
+
+    @manager_bot.on_callback_query()
+    async def callback_panel_handler(client, callback):
+        data = callback.data.split("_")
+        action = "_".join(data[:-1])
+        target_user_id = int(data[-1])
+        if callback.from_user.id != target_user_id:
+            await callback.answer("⛔️ دسترسی غیرمجاز!", show_alert=True); return
+
+        if action == "toggle_clock":
+            new_state = not CLOCK_STATUS.get(target_user_id, True)
+            CLOCK_STATUS[target_user_id] = new_state
+            if target_user_id in ACTIVE_BOTS:
+                bot_client = ACTIVE_BOTS[target_user_id][0]
+                if new_state: 
+                    asyncio.create_task(perform_clock_update_now(bot_client, target_user_id))
+                else:
+                    try:
+                        me = await bot_client.get_me()
+                        clean_name = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', me.first_name).strip()
+                        if clean_name != me.first_name: 
+                            await bot_client.update_profile(first_name=clean_name)
+                    except: pass
+        elif action == "cycle_font":
+            cur = USER_FONT_CHOICES.get(target_user_id, 'stylized')
+            idx = (FONT_KEYS_ORDER.index(cur) + 1) % len(FONT_KEYS_ORDER)
+            USER_FONT_CHOICES[target_user_id] = FONT_KEYS_ORDER[idx]
+            CLOCK_STATUS[target_user_id] = True
+            BIO_FONT_CHOICES[target_user_id] = FONT_KEYS_ORDER[idx]
+            if target_user_id in ACTIVE_BOTS: 
+                asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[target_user_id][0], target_user_id))
+        elif action == "toggle_bold": 
+            BOLD_MODE_STATUS[target_user_id] = not BOLD_MODE_STATUS.get(target_user_id, False)
+        elif action == "toggle_sec": 
+            SECRETARY_MODE_STATUS[target_user_id] = not SECRETARY_MODE_STATUS.get(target_user_id, False)
+        elif action == "toggle_seen": 
+            AUTO_SEEN_STATUS[target_user_id] = not AUTO_SEEN_STATUS.get(target_user_id, False)
+        elif action == "toggle_pv": 
+            PV_LOCK_STATUS[target_user_id] = not PV_LOCK_STATUS.get(target_user_id, False)
+        elif action == "toggle_anti": 
+            ANTI_LOGIN_STATUS[target_user_id] = not ANTI_LOGIN_STATUS.get(target_user_id, False)
+        elif action == "toggle_type":
+            TYPING_MODE_STATUS[target_user_id] = not TYPING_MODE_STATUS.get(target_user_id, False)
+            if TYPING_MODE_STATUS[target_user_id]: 
+                PLAYING_MODE_STATUS[target_user_id] = False
+        elif action == "toggle_game":
+            PLAYING_MODE_STATUS[target_user_id] = not PLAYING_MODE_STATUS.get(target_user_id, False)
+            if PLAYING_MODE_STATUS[target_user_id]: 
+                TYPING_MODE_STATUS[target_user_id] = False
+        elif action == "toggle_g_enemy": 
+            GLOBAL_ENEMY_STATUS[target_user_id] = not GLOBAL_ENEMY_STATUS.get(target_user_id, False)
+        elif action == "toggle_autosave":
+            AUTO_SAVE_STATUS[target_user_id] = not AUTO_SAVE_STATUS.get(target_user_id, False)
+        elif action == "toggle_bio_clock":
+            BIO_CLOCK_STATUS[target_user_id] = not BIO_CLOCK_STATUS.get(target_user_id, False)
+            if target_user_id not in BIO_FONT_CHOICES:
+                BIO_FONT_CHOICES[target_user_id] = USER_FONT_CHOICES.get(target_user_id, 'stylized')
+        elif action == "toggle_bio_date":
+            BIO_DATE_STATUS[target_user_id] = not BIO_DATE_STATUS.get(target_user_id, False)
+            if target_user_id not in BIO_FONT_CHOICES:
+                BIO_FONT_CHOICES[target_user_id] = USER_FONT_CHOICES.get(target_user_id, 'stylized')
+        elif action == "toggle_offline":
+            new_state = not OFFLINE_MODE_STATUS.get(target_user_id, False)
+            OFFLINE_MODE_STATUS[target_user_id] = new_state
+            if target_user_id in ACTIVE_BOTS:
+                bot_client = ACTIVE_BOTS[target_user_id][0]
                 try:
-                    me = await bot_client.get_me()
-                    clean_name = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', me.first_name).strip()
-                    if clean_name != me.first_name: 
-                        await bot_client.update_profile(first_name=clean_name)
-                except: pass
-    elif action == "cycle_font":
-        cur = USER_FONT_CHOICES.get(target_user_id, 'stylized')
-        idx = (FONT_KEYS_ORDER.index(cur) + 1) % len(FONT_KEYS_ORDER)
-        USER_FONT_CHOICES[target_user_id] = FONT_KEYS_ORDER[idx]
-        CLOCK_STATUS[target_user_id] = True
-        BIO_FONT_CHOICES[target_user_id] = FONT_KEYS_ORDER[idx]
-        if target_user_id in ACTIVE_BOTS: 
-            asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[target_user_id][0], target_user_id))
-    elif action == "toggle_bold": 
-        BOLD_MODE_STATUS[target_user_id] = not BOLD_MODE_STATUS.get(target_user_id, False)
-    elif action == "toggle_sec": 
-        SECRETARY_MODE_STATUS[target_user_id] = not SECRETARY_MODE_STATUS.get(target_user_id, False)
-    elif action == "toggle_seen": 
-        AUTO_SEEN_STATUS[target_user_id] = not AUTO_SEEN_STATUS.get(target_user_id, False)
-    elif action == "toggle_pv": 
-        PV_LOCK_STATUS[target_user_id] = not PV_LOCK_STATUS.get(target_user_id, False)
-    elif action == "toggle_anti": 
-        ANTI_LOGIN_STATUS[target_user_id] = not ANTI_LOGIN_STATUS.get(target_user_id, False)
-    elif action == "toggle_type":
-        TYPING_MODE_STATUS[target_user_id] = not TYPING_MODE_STATUS.get(target_user_id, False)
-        if TYPING_MODE_STATUS[target_user_id]: 
-            PLAYING_MODE_STATUS[target_user_id] = False
-    elif action == "toggle_game":
-        PLAYING_MODE_STATUS[target_user_id] = not PLAYING_MODE_STATUS.get(target_user_id, False)
-        if PLAYING_MODE_STATUS[target_user_id]: 
-            TYPING_MODE_STATUS[target_user_id] = False
-    elif action == "toggle_g_enemy": 
-        GLOBAL_ENEMY_STATUS[target_user_id] = not GLOBAL_ENEMY_STATUS.get(target_user_id, False)
-    elif action == "toggle_autosave":
-        AUTO_SAVE_STATUS[target_user_id] = not AUTO_SAVE_STATUS.get(target_user_id, False)
-    elif action == "toggle_bio_clock":
-        BIO_CLOCK_STATUS[target_user_id] = not BIO_CLOCK_STATUS.get(target_user_id, False)
-        if target_user_id not in BIO_FONT_CHOICES:
-            BIO_FONT_CHOICES[target_user_id] = USER_FONT_CHOICES.get(target_user_id, 'stylized')
-    elif action == "toggle_bio_date":
-        BIO_DATE_STATUS[target_user_id] = not BIO_DATE_STATUS.get(target_user_id, False)
-        if target_user_id not in BIO_FONT_CHOICES:
-            BIO_FONT_CHOICES[target_user_id] = USER_FONT_CHOICES.get(target_user_id, 'stylized')
-    elif action == "toggle_offline":
-        new_state = not OFFLINE_MODE_STATUS.get(target_user_id, False)
-        OFFLINE_MODE_STATUS[target_user_id] = new_state
-        if target_user_id in ACTIVE_BOTS:
-            bot_client = ACTIVE_BOTS[target_user_id][0]
+                    await bot_client.invoke(functions.account.UpdateStatus(offline=new_state))
+                except Exception as e:
+                    logging.error(f"Offline mode update failed: {e}")
+        elif action == "toggle_monshi2":
+            MONSHI2_STATUS[target_user_id] = not MONSHI2_STATUS.get(target_user_id, False)
+        elif action == "toggle_spoiler":
+            fmt = TEXT_FORMATTING.get(target_user_id, {})
+            fmt['spoiler'] = not fmt.get('spoiler', False)
+            TEXT_FORMATTING[target_user_id] = fmt
+        elif action == "toggle_italic":
+            fmt = TEXT_FORMATTING.get(target_user_id, {})
+            fmt['italic'] = not fmt.get('italic', False)
+            TEXT_FORMATTING[target_user_id] = fmt
+        elif action == "toggle_code":
+            fmt = TEXT_FORMATTING.get(target_user_id, {})
+            fmt['code'] = not fmt.get('code', False)
+            TEXT_FORMATTING[target_user_id] = fmt
+        elif action == "toggle_underline":
+            fmt = TEXT_FORMATTING.get(target_user_id, {})
+            fmt['underline'] = not fmt.get('underline', False)
+            TEXT_FORMATTING[target_user_id] = fmt
+        elif action == "toggle_strike":
+            fmt = TEXT_FORMATTING.get(target_user_id, {})
+            fmt['strike'] = not fmt.get('strike', False)
+            TEXT_FORMATTING[target_user_id] = fmt
+        elif action == "toggle_quote":
+            fmt = TEXT_FORMATTING.get(target_user_id, {})
+            fmt['quote'] = not fmt.get('quote', False)
+            TEXT_FORMATTING[target_user_id] = fmt
+        elif action.startswith("lang_"):
+            l = action.split("_")[1]
+            AUTO_TRANSLATE_TARGET[target_user_id] = l if AUTO_TRANSLATE_TARGET.get(target_user_id) != l else None
+        elif action == "close_panel":
             try:
-                await bot_client.invoke(functions.account.UpdateStatus(offline=new_state))
-            except Exception as e:
-                logging.error(f"Offline mode update failed: {e}")
-    elif action == "toggle_monshi2":
-        MONSHI2_STATUS[target_user_id] = not MONSHI2_STATUS.get(target_user_id, False)
-    elif action == "toggle_spoiler":
-        fmt = TEXT_FORMATTING.get(target_user_id, {})
-        fmt['spoiler'] = not fmt.get('spoiler', False)
-        TEXT_FORMATTING[target_user_id] = fmt
-    elif action == "toggle_italic":
-        fmt = TEXT_FORMATTING.get(target_user_id, {})
-        fmt['italic'] = not fmt.get('italic', False)
-        TEXT_FORMATTING[target_user_id] = fmt
-    elif action == "toggle_code":
-        fmt = TEXT_FORMATTING.get(target_user_id, {})
-        fmt['code'] = not fmt.get('code', False)
-        TEXT_FORMATTING[target_user_id] = fmt
-    elif action == "toggle_underline":
-        fmt = TEXT_FORMATTING.get(target_user_id, {})
-        fmt['underline'] = not fmt.get('underline', False)
-        TEXT_FORMATTING[target_user_id] = fmt
-    elif action == "toggle_strike":
-        fmt = TEXT_FORMATTING.get(target_user_id, {})
-        fmt['strike'] = not fmt.get('strike', False)
-        TEXT_FORMATTING[target_user_id] = fmt
-    elif action == "toggle_quote":
-        fmt = TEXT_FORMATTING.get(target_user_id, {})
-        fmt['quote'] = not fmt.get('quote', False)
-        TEXT_FORMATTING[target_user_id] = fmt
-    elif action.startswith("lang_"):
-        l = action.split("_")[1]
-        AUTO_TRANSLATE_TARGET[target_user_id] = l if AUTO_TRANSLATE_TARGET.get(target_user_id) != l else None
-    elif action == "close_panel":
+                if callback.inline_message_id: 
+                    await client.edit_inline_text(callback.inline_message_id, "✅ پنل بسته شد.")
+                else: 
+                    await callback.message.delete()
+            except: pass
+            return
+
+        try: 
+            await callback.edit_message_reply_markup(generate_panel_markup(target_user_id))
+        except: 
+            pass
+
+    # --- Login Handlers ---
+    @manager_bot.on_message(filters.command("start"))
+    async def start_login(client, message):
+        kb = ReplyKeyboardMarkup([[KeyboardButton("📱 شماره و شروع", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
+        await message.reply_text("👋 خوش آمدید.", reply_markup=kb)
+
+    @manager_bot.on_message(filters.contact)
+    async def contact_handler(client, message):
+        chat_id = message.chat.id
+        phone = message.contact.phone_number
+        await message.reply_text("⏳ در حال اتصال...", reply_markup=ReplyKeyboardRemove())
+        user_client = Client(f"login_{chat_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, no_updates=True)
+        await user_client.connect()
         try:
-            if callback.inline_message_id: 
-                await client.edit_inline_text(callback.inline_message_id, "✅ پنل بسته شد.")
-            else: 
-                await callback.message.delete()
-        except: pass
-        return
-
-    try: 
-        await callback.edit_message_reply_markup(generate_panel_markup(target_user_id))
-    except: 
-        pass
-
-# --- Login Handlers ---
-@manager_bot.on_message(filters.command("start"))
-async def start_login(client, message):
-    kb = ReplyKeyboardMarkup([[KeyboardButton("📱 شماره و شروع", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
-    await message.reply_text("👋 خوش آمدید.", reply_markup=kb)
-
-@manager_bot.on_message(filters.contact)
-async def contact_handler(client, message):
-    chat_id = message.chat.id
-    phone = message.contact.phone_number
-    await message.reply_text("⏳ در حال اتصال...", reply_markup=ReplyKeyboardRemove())
-    user_client = Client(f"login_{chat_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, no_updates=True)
-    await user_client.connect()
-    try:
-        sent_code = await user_client.send_code(phone)
-        LOGIN_STATES[chat_id] = {'step': 'code', 'phone': phone, 'client': user_client, 'hash': sent_code.phone_code_hash}
-        await message.reply_text("✅ کد را بفرستید (مثلاً `1.1.1.1.1`)")
-    except Exception as e:
-        await user_client.disconnect()
-        await message.reply_text(f"❌ خطا: {e}")
-
-@manager_bot.on_message(filters.text & filters.private)
-async def text_handler(client, message):
-    chat_id = message.chat.id
-    state = LOGIN_STATES.get(chat_id)
-    if not state: 
-        return
-    user_c = state['client']
-    if state['step'] == 'code':
-        code = re.sub(r"\D+", "", message.text)
-        try:
-            await user_c.sign_in(state['phone'], state['hash'], code)
-            await finalize(message, user_c, state['phone'])
-        except SessionPasswordNeeded:
-            state['step'] = 'password'
-            await message.reply_text("🔐 رمز دو مرحله‌ای را وارد کنید:")
-        except Exception as e: 
-            await message.reply_text(f"❌ خطا: {e}")
-    elif state['step'] == 'password':
-        try:
-            await user_c.check_password(message.text)
-            await finalize(message, user_c, state['phone'])
-        except Exception as e: 
+            sent_code = await user_client.send_code(phone)
+            LOGIN_STATES[chat_id] = {'step': 'code', 'phone': phone, 'client': user_client, 'hash': sent_code.phone_code_hash}
+            await message.reply_text("✅ کد را بفرستید (مثلاً `1.1.1.1.1`)")
+        except Exception as e:
+            await user_client.disconnect()
             await message.reply_text(f"❌ خطا: {e}")
 
-async def finalize(message, user_c, phone):
-    s_str = await user_c.export_session_string()
-    me = await user_c.get_me()
-    await user_c.disconnect()
-    if sessions_collection is not None:  # ✅ FIX: Check with 'is not None'
-        sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': s_str, 'user_id': me.id}}, upsert=True)
-    asyncio.create_task(start_bot_instance(s_str, phone, 'stylized'))
-    del LOGIN_STATES[message.chat.id]
-    await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
+    @manager_bot.on_message(filters.text & filters.private)
+    async def text_handler(client, message):
+        chat_id = message.chat.id
+        state = LOGIN_STATES.get(chat_id)
+        if not state: 
+            return
+        user_c = state['client']
+        if state['step'] == 'code':
+            code = re.sub(r"\D+", "", message.text)
+            try:
+                await user_c.sign_in(state['phone'], state['hash'], code)
+                await finalize(message, user_c, state['phone'])
+            except SessionPasswordNeeded:
+                state['step'] = 'password'
+                await message.reply_text("🔐 رمز دو مرحله‌ای را وارد کنید:")
+            except Exception as e: 
+                await message.reply_text(f"❌ خطا: {e}")
+        elif state['step'] == 'password':
+            try:
+                await user_c.check_password(message.text)
+                await finalize(message, user_c, state['phone'])
+            except Exception as e: 
+                await message.reply_text(f"❌ خطا: {e}")
+
+    async def finalize(message, user_c, phone):
+        s_str = await user_c.export_session_string()
+        me = await user_c.get_me()
+        await user_c.disconnect()
+        if sessions_collection is not None:
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': s_str, 'user_id': me.id}}, upsert=True)
+        asyncio.create_task(start_bot_instance(s_str, phone, 'stylized'))
+        del LOGIN_STATES[message.chat.id]
+        await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
 
 # --- Flask & Run ---
 @app_flask.route('/')
@@ -1133,12 +1200,28 @@ def home():
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
     
-    # ✅ FIX: Check if sessions_collection is not None before using it
+    # Load saved sessions from MongoDB if available
     if sessions_collection is not None:
-        for doc in sessions_collection.find():
-            asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
+        try:
+            for doc in sessions_collection.find():
+                asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
+        except Exception as e:
+            logging.error(f"Error loading sessions: {e}")
     
-    await manager_bot.start()
+    # Start manager bot if configured
+    if manager_bot:
+        try:
+            await manager_bot.start()
+            logging.info("Manager bot started successfully!")
+        except ApiIdInvalid:
+            logging.error("❌ API_ID or API_HASH is invalid!")
+        except AccessTokenInvalid:
+            logging.error("❌ BOT_TOKEN is invalid! Please create a new bot and get a new token.")
+        except Exception as e:
+            logging.error(f"❌ Failed to start manager bot: {e}")
+    else:
+        logging.warning("Manager bot not started. Set BOT_TOKEN and MANAGER_BOT_USERNAME to enable.")
+    
     await idle()
 
 if __name__ == "__main__":

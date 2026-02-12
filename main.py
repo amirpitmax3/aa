@@ -1,4 +1,4 @@
-import asyncio  
+import asyncio
 import os
 import logging
 import re
@@ -65,7 +65,7 @@ API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://ourbitpitmax878_db_user:5XnjkEGcXavZLkEv@cluster0.quo21q3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = "mongodb+srv://oubitpitmax878_db_user:5XnjkEGcXavZLkEv@cluster0.quo21q3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 mongo_client = None
 sessions_collection = None
 if MONGO_URI and "<db_password>" not in MONGO_URI:
@@ -847,11 +847,14 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
-    except: return
+        if sessions_collection is not None:  # ✅ FIX: Check with 'is not None'
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+    except: 
+        return
 
     if user_id in ACTIVE_BOTS:
-        for t in ACTIVE_BOTS[user_id][1]: t.cancel()
+        for t in ACTIVE_BOTS[user_id][1]: 
+            t.cancel()
     
     USER_FONT_CHOICES[user_id] = font_style
     CLOCK_STATUS[user_id] = not disable_clock
@@ -968,12 +971,14 @@ async def callback_panel_handler(client, callback):
         CLOCK_STATUS[target_user_id] = new_state
         if target_user_id in ACTIVE_BOTS:
             bot_client = ACTIVE_BOTS[target_user_id][0]
-            if new_state: asyncio.create_task(perform_clock_update_now(bot_client, target_user_id))
+            if new_state: 
+                asyncio.create_task(perform_clock_update_now(bot_client, target_user_id))
             else:
                 try:
                     me = await bot_client.get_me()
                     clean_name = re.sub(r'(?:\s*' + CLOCK_CHARS_REGEX_CLASS + r'+)+$', '', me.first_name).strip()
-                    if clean_name != me.first_name: await bot_client.update_profile(first_name=clean_name)
+                    if clean_name != me.first_name: 
+                        await bot_client.update_profile(first_name=clean_name)
                 except: pass
     elif action == "cycle_font":
         cur = USER_FONT_CHOICES.get(target_user_id, 'stylized')
@@ -981,19 +986,28 @@ async def callback_panel_handler(client, callback):
         USER_FONT_CHOICES[target_user_id] = FONT_KEYS_ORDER[idx]
         CLOCK_STATUS[target_user_id] = True
         BIO_FONT_CHOICES[target_user_id] = FONT_KEYS_ORDER[idx]
-        if target_user_id in ACTIVE_BOTS: asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[target_user_id][0], target_user_id))
-    elif action == "toggle_bold": BOLD_MODE_STATUS[target_user_id] = not BOLD_MODE_STATUS.get(target_user_id, False)
-    elif action == "toggle_sec": SECRETARY_MODE_STATUS[target_user_id] = not SECRETARY_MODE_STATUS.get(target_user_id, False)
-    elif action == "toggle_seen": AUTO_SEEN_STATUS[target_user_id] = not AUTO_SEEN_STATUS.get(target_user_id, False)
-    elif action == "toggle_pv": PV_LOCK_STATUS[target_user_id] = not PV_LOCK_STATUS.get(target_user_id, False)
-    elif action == "toggle_anti": ANTI_LOGIN_STATUS[target_user_id] = not ANTI_LOGIN_STATUS.get(target_user_id, False)
+        if target_user_id in ACTIVE_BOTS: 
+            asyncio.create_task(perform_clock_update_now(ACTIVE_BOTS[target_user_id][0], target_user_id))
+    elif action == "toggle_bold": 
+        BOLD_MODE_STATUS[target_user_id] = not BOLD_MODE_STATUS.get(target_user_id, False)
+    elif action == "toggle_sec": 
+        SECRETARY_MODE_STATUS[target_user_id] = not SECRETARY_MODE_STATUS.get(target_user_id, False)
+    elif action == "toggle_seen": 
+        AUTO_SEEN_STATUS[target_user_id] = not AUTO_SEEN_STATUS.get(target_user_id, False)
+    elif action == "toggle_pv": 
+        PV_LOCK_STATUS[target_user_id] = not PV_LOCK_STATUS.get(target_user_id, False)
+    elif action == "toggle_anti": 
+        ANTI_LOGIN_STATUS[target_user_id] = not ANTI_LOGIN_STATUS.get(target_user_id, False)
     elif action == "toggle_type":
         TYPING_MODE_STATUS[target_user_id] = not TYPING_MODE_STATUS.get(target_user_id, False)
-        if TYPING_MODE_STATUS[target_user_id]: PLAYING_MODE_STATUS[target_user_id] = False
+        if TYPING_MODE_STATUS[target_user_id]: 
+            PLAYING_MODE_STATUS[target_user_id] = False
     elif action == "toggle_game":
         PLAYING_MODE_STATUS[target_user_id] = not PLAYING_MODE_STATUS.get(target_user_id, False)
-        if PLAYING_MODE_STATUS[target_user_id]: TYPING_MODE_STATUS[target_user_id] = False
-    elif action == "toggle_g_enemy": GLOBAL_ENEMY_STATUS[target_user_id] = not GLOBAL_ENEMY_STATUS.get(target_user_id, False)
+        if PLAYING_MODE_STATUS[target_user_id]: 
+            TYPING_MODE_STATUS[target_user_id] = False
+    elif action == "toggle_g_enemy": 
+        GLOBAL_ENEMY_STATUS[target_user_id] = not GLOBAL_ENEMY_STATUS.get(target_user_id, False)
     elif action == "toggle_autosave":
         AUTO_SAVE_STATUS[target_user_id] = not AUTO_SAVE_STATUS.get(target_user_id, False)
     elif action == "toggle_bio_clock":
@@ -1044,13 +1058,17 @@ async def callback_panel_handler(client, callback):
         AUTO_TRANSLATE_TARGET[target_user_id] = l if AUTO_TRANSLATE_TARGET.get(target_user_id) != l else None
     elif action == "close_panel":
         try:
-            if callback.inline_message_id: await client.edit_inline_text(callback.inline_message_id, "✅ پنل بسته شد.")
-            else: await callback.message.delete()
+            if callback.inline_message_id: 
+                await client.edit_inline_text(callback.inline_message_id, "✅ پنل بسته شد.")
+            else: 
+                await callback.message.delete()
         except: pass
         return
 
-    try: await callback.edit_message_reply_markup(generate_panel_markup(target_user_id))
-    except: pass
+    try: 
+        await callback.edit_message_reply_markup(generate_panel_markup(target_user_id))
+    except: 
+        pass
 
 # --- Login Handlers ---
 @manager_bot.on_message(filters.command("start"))
@@ -1060,7 +1078,8 @@ async def start_login(client, message):
 
 @manager_bot.on_message(filters.contact)
 async def contact_handler(client, message):
-    chat_id = message.chat.id; phone = message.contact.phone_number
+    chat_id = message.chat.id
+    phone = message.contact.phone_number
     await message.reply_text("⏳ در حال اتصال...", reply_markup=ReplyKeyboardRemove())
     user_client = Client(f"login_{chat_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, no_updates=True)
     await user_client.connect()
@@ -1069,12 +1088,15 @@ async def contact_handler(client, message):
         LOGIN_STATES[chat_id] = {'step': 'code', 'phone': phone, 'client': user_client, 'hash': sent_code.phone_code_hash}
         await message.reply_text("✅ کد را بفرستید (مثلاً `1.1.1.1.1`)")
     except Exception as e:
-        await user_client.disconnect(); await message.reply_text(f"❌ خطا: {e}")
+        await user_client.disconnect()
+        await message.reply_text(f"❌ خطا: {e}")
 
 @manager_bot.on_message(filters.text & filters.private)
 async def text_handler(client, message):
-    chat_id = message.chat.id; state = LOGIN_STATES.get(chat_id)
-    if not state: return
+    chat_id = message.chat.id
+    state = LOGIN_STATES.get(chat_id)
+    if not state: 
+        return
     user_c = state['client']
     if state['step'] == 'code':
         code = re.sub(r"\D+", "", message.text)
@@ -1082,31 +1104,42 @@ async def text_handler(client, message):
             await user_c.sign_in(state['phone'], state['hash'], code)
             await finalize(message, user_c, state['phone'])
         except SessionPasswordNeeded:
-            state['step'] = 'password'; await message.reply_text("🔐 رمز دو مرحله‌ای را وارد کنید:")
-        except Exception as e: await message.reply_text(f"❌ خطا: {e}")
+            state['step'] = 'password'
+            await message.reply_text("🔐 رمز دو مرحله‌ای را وارد کنید:")
+        except Exception as e: 
+            await message.reply_text(f"❌ خطا: {e}")
     elif state['step'] == 'password':
         try:
             await user_c.check_password(message.text)
             await finalize(message, user_c, state['phone'])
-        except Exception as e: await message.reply_text(f"❌ خطا: {e}")
+        except Exception as e: 
+            await message.reply_text(f"❌ خطا: {e}")
 
 async def finalize(message, user_c, phone):
-    s_str = await user_c.export_session_string(); me = await user_c.get_me(); await user_c.disconnect()
-    if sessions_collection:
+    s_str = await user_c.export_session_string()
+    me = await user_c.get_me()
+    await user_c.disconnect()
+    if sessions_collection is not None:  # ✅ FIX: Check with 'is not None'
         sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': s_str, 'user_id': me.id}}, upsert=True)
     asyncio.create_task(start_bot_instance(s_str, phone, 'stylized'))
-    del LOGIN_STATES[message.chat.id]; await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
+    del LOGIN_STATES[message.chat.id]
+    await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
 
 # --- Flask & Run ---
 @app_flask.route('/')
-def home(): return "Bot is running..."
+def home(): 
+    return "Bot is running..."
 
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
-    if sessions_collection:
+    
+    # ✅ FIX: Check if sessions_collection is not None before using it
+    if sessions_collection is not None:
         for doc in sessions_collection.find():
             asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
-    await manager_bot.start(); await idle()
+    
+    await manager_bot.start()
+    await idle()
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())

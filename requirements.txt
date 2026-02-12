@@ -8,3 +8,4 @@ Flask==3.0.0
 certifi==2024.2.2
 jdatetime==4.1.0
 TgCrypto==1.2.5
+aiofiles

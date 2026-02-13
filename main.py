@@ -127,12 +127,16 @@ HELP_TEXT = """
   » `ریاکشن [شکلک]` | `خاموش` (ریپلای روی کاربر)
 
 **✦ سرگرمی**
-  » `تاس` `
+  » `تاس` | `تاس [عدد]`
   » `بولینگ`
+
+**✦ تنظیمات ظاهری**
+  » `تنظیم عکس` (ریپلای روی عکس برای پنل)
+  » `حذف عکس` (حذف عکس پنل)
 ━━━━━━━━━━━━━━━━━━━━
 """
 
-COMMAND_REGEX = r"^(راهنما|ذخیره|تکرار \d+|حذف \d+|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|پنل|panel)$"
+COMMAND_REGEX = r"^(راهنما|ذخیره|تکرار \d+|حذف \d+|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تنظیم عکس|حذف عکس|پنل|panel)$"
 
 # --- State Management ---
 ACTIVE_ENEMIES = {}
@@ -191,6 +195,20 @@ async def translate_text(text: str, target_lang: str) -> str:
                     return data[0][0][0]
     except: pass
     return text
+
+def get_panel_photo(user_id):
+    if sessions_collection is not None:
+        doc = sessions_collection.find_one({'user_id': user_id})
+        return doc.get('panel_photo') if doc else None
+    return None
+
+def set_panel_photo_db(user_id, file_id):
+    if sessions_collection is not None:
+        sessions_collection.update_one({'user_id': user_id}, {'$set': {'panel_photo': file_id}}, upsert=False)
+
+def del_panel_photo_db(user_id):
+    if sessions_collection is not None:
+        sessions_collection.update_one({'user_id': user_id}, {'$unset': {'panel_photo': ""}})
 
 # --- Tasks ---
 async def update_profile_clock(client: Client, user_id: int):
@@ -311,6 +329,15 @@ async def panel_command_controller(client, message):
         try: await message.edit_text(f"❌ خطا در لود پنل: {e}\n\n⚠️ از استارت بودن @{bot_username} مطمئن شوید.")
         except: pass
 
+async def photo_setting_controller(client, message):
+    user_id = client.me.id
+    if message.text == "تنظیم عکس" and message.reply_to_message and message.reply_to_message.photo:
+        set_panel_photo_db(user_id, message.reply_to_message.photo.file_id)
+        await message.edit_text("✅ عکس پنل ذخیره شد.")
+    elif message.text == "حذف عکس":
+        del_panel_photo_db(user_id)
+        await message.edit_text("🗑 عکس پنل حذف شد.")
+
 async def reply_based_controller(client, message):
     user_id = client.me.id
     cmd = message.text
@@ -399,6 +426,7 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     client.add_handler(MessageHandler(outgoing_message_modifier, filters.text & filters.me & ~filters.reply), group=-1)
     client.add_handler(MessageHandler(help_controller, filters.me & filters.regex("^راهنما$")))
     client.add_handler(MessageHandler(panel_command_controller, filters.me & filters.regex(r"^(پنل|panel)$")))
+    client.add_handler(MessageHandler(photo_setting_controller, filters.me & filters.regex(r"^(تنظیم عکس|حذف عکس)$")))
     client.add_handler(MessageHandler(reply_based_controller, filters.me)) 
     client.add_handler(MessageHandler(enemy_handler, filters.create(lambda _, c, m: (m.from_user.id, m.chat.id) in ACTIVE_ENEMIES.get(c.me.id, set()) or GLOBAL_ENEMY_STATUS.get(c.me.id)) & ~filters.me), group=1)
     client.add_handler(MessageHandler(secretary_auto_reply_handler, filters.private & ~filters.me), group=1)
@@ -450,10 +478,18 @@ def generate_panel_markup(user_id):
 async def inline_panel_handler(client, query):
     user_id = query.from_user.id
     if query.query == "panel":
-        result = InlineQueryResultArticle(
-            title="پنل مدیریت", input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"),
-            reply_markup=generate_panel_markup(user_id), thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
-        )
+        photo_id = get_panel_photo(user_id)
+        if photo_id:
+            result = InlineQueryResultPhoto(
+                photo_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg", thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg",
+                photo_file_id=photo_id, caption=f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار",
+                reply_markup=generate_panel_markup(user_id)
+            )
+        else:
+            result = InlineQueryResultArticle(
+                title="پنل مدیریت", input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"),
+                reply_markup=generate_panel_markup(user_id), thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
+            )
         await query.answer([result], cache_time=0)
 
 @manager_bot.on_callback_query()
@@ -565,4 +601,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
-

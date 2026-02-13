@@ -58,10 +58,10 @@ API_ID = 28190856
 API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
 
 # 🔴🔴🔴 توکن ربات منیجر 🔴🔴🔴
-BOT_TOKEN = "8272668913:AAEleT0kciRSM-IId7amI7SA2iQ5KMC4DTI" 
+BOT_TOKEN = "8459868829:AAELveuXul1f1TDZ_l3SEniZCaL-fJH7MnU" 
 
 # --- Database Setup (MongoDB) ---
-MONGO_URI = "mongodb+srv://ourbitpitmax878_db_user:5XnjkEGcXavZLkEv@cluster0.quo21q3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = "mongodb+srv://111111:<db_password>@cluster0.gtkw6em.mongodb.net/?appName=Cluster0"
 mongo_client = None
 sessions_collection = None
 if MONGO_URI and "<db_password>" not in MONGO_URI:
@@ -93,7 +93,7 @@ FONT_STYLES = {
     "monospace":    {'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
     "normal":       {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
     "circled":      {'0':'⓪','1':'①','2':'②','3':'③','4':'④','5':'⑤','6':'⑥','7':'⑦','8':'⑧','9':'⑨',':':'∶'},
-    "fullwidth":    {'0':'０','1':'１','2':'２','3':'３','4':'４','5':'５','6':'６','7':'７','8':'۸','9':'۹',':':'：'},
+    "fullwidth":    {'0':'０','1':'１','2':'２','3':'３','4':'４','5':'５','6':'６','7':'７','8':'８','9':'９',':':'：'},
     "filled":       {'0':'⓿','1':'❶','2':'❷','3':'❸','4':'❹','5':'❺','6':'❻','7':'❼','8':'❽','9':'❾',':':':'},
     "sans":         {'0':'𝟢','1':'𝟣','2':'𝟤','3':'𝟥','4':'𝟦','5':'𝟧','6':'𝟨','7':'𝟩','8':'𝟪','9':'𝟫',':':':'},
     "inverted":     {'0':'0','1':'Ɩ','2':'ᄅ','3':'Ɛ','4':'ㄣ','5':'ϛ','6':'9','7':'ㄥ','8':'8','9':'6',':':':'},
@@ -117,7 +117,6 @@ HELP_TEXT = """
   » `حذف [تعداد]` 
   » `ذخیره` (ریپلای روی پیام)
   » `تکرار [تعداد]` (ریپلای روی پیام)
-  » `کپی روشن` | `کپی خاموش` (ریپلای روی کاربر)
 
 **✦ دفاعی و امنیتی**
   » `دشمن روشن` | `خاموش` (ریپلای روی کاربر)
@@ -130,13 +129,10 @@ HELP_TEXT = """
   » `تاس` | `تاس [عدد]`
   » `بولینگ`
 
-**✦ تنظیمات ظاهری**
-  » `تنظیم عکس` (ریپلای روی عکس برای پنل)
-  » `حذف عکس` (حذف عکس پنل)
 ━━━━━━━━━━━━━━━━━━━━
 """
 
-COMMAND_REGEX = r"^(راهنما|ذخیره|تکرار \d+|حذف \d+|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|تنظیم عکس|حذف عکس|پنل|panel)$"
+COMMAND_REGEX = r"^(راهنما|ذخیره|تکرار \d+|حذف \d+|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|لیست دشمن|تاس|تاس \d+|بولینگ|پنل|panel)$"
 
 # --- State Management ---
 ACTIVE_ENEMIES = {}
@@ -195,20 +191,6 @@ async def translate_text(text: str, target_lang: str) -> str:
                     return data[0][0][0]
     except: pass
     return text
-
-def get_panel_photo(user_id):
-    if sessions_collection is not None:
-        doc = sessions_collection.find_one({'user_id': user_id})
-        return doc.get('panel_photo') if doc else None
-    return None
-
-def set_panel_photo_db(user_id, file_id):
-    if sessions_collection is not None:
-        sessions_collection.update_one({'user_id': user_id}, {'$set': {'panel_photo': file_id}}, upsert=False)
-
-def del_panel_photo_db(user_id):
-    if sessions_collection is not None:
-        sessions_collection.update_one({'user_id': user_id}, {'$unset': {'panel_photo': ""}})
 
 # --- Tasks ---
 async def update_profile_clock(client: Client, user_id: int):
@@ -329,15 +311,6 @@ async def panel_command_controller(client, message):
         try: await message.edit_text(f"❌ خطا در لود پنل: {e}\n\n⚠️ از استارت بودن @{bot_username} مطمئن شوید.")
         except: pass
 
-async def photo_setting_controller(client, message):
-    user_id = client.me.id
-    if message.text == "تنظیم عکس" and message.reply_to_message and message.reply_to_message.photo:
-        set_panel_photo_db(user_id, message.reply_to_message.photo.file_id)
-        await message.edit_text("✅ عکس پنل ذخیره شد.")
-    elif message.text == "حذف عکس":
-        del_panel_photo_db(user_id)
-        await message.edit_text("🗑 عکس پنل حذف شد.")
-
 async def reply_based_controller(client, message):
     user_id = client.me.id
     cmd = message.text
@@ -411,7 +384,8 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     try:
         await client.start()
         user_id = (await client.get_me()).id
-        if sessions_collection: sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
+        if sessions_collection is not None: 
+            sessions_collection.update_one({'phone_number': phone}, {'$set': {'user_id': user_id}})
     except: return
 
     if user_id in ACTIVE_BOTS:
@@ -426,7 +400,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
     client.add_handler(MessageHandler(outgoing_message_modifier, filters.text & filters.me & ~filters.reply), group=-1)
     client.add_handler(MessageHandler(help_controller, filters.me & filters.regex("^راهنما$")))
     client.add_handler(MessageHandler(panel_command_controller, filters.me & filters.regex(r"^(پنل|panel)$")))
-    client.add_handler(MessageHandler(photo_setting_controller, filters.me & filters.regex(r"^(تنظیم عکس|حذف عکس)$")))
     client.add_handler(MessageHandler(reply_based_controller, filters.me)) 
     client.add_handler(MessageHandler(enemy_handler, filters.create(lambda _, c, m: (m.from_user.id, m.chat.id) in ACTIVE_ENEMIES.get(c.me.id, set()) or GLOBAL_ENEMY_STATUS.get(c.me.id)) & ~filters.me), group=1)
     client.add_handler(MessageHandler(secretary_auto_reply_handler, filters.private & ~filters.me), group=1)
@@ -478,18 +451,12 @@ def generate_panel_markup(user_id):
 async def inline_panel_handler(client, query):
     user_id = query.from_user.id
     if query.query == "panel":
-        photo_id = get_panel_photo(user_id)
-        if photo_id:
-            result = InlineQueryResultPhoto(
-                photo_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg", thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg",
-                photo_file_id=photo_id, caption=f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار",
-                reply_markup=generate_panel_markup(user_id)
-            )
-        else:
-            result = InlineQueryResultArticle(
-                title="پنل مدیریت", input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"),
-                reply_markup=generate_panel_markup(user_id), thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
-            )
+        result = InlineQueryResultArticle(
+            title="پنل مدیریت", 
+            input_message_content=InputTextMessageContent(f"⚡️ **مدیریت پیشرفته سلف بات**\n👤 کاربر: {user_id}\n\nوضعیت اتصال: ✅ برقرار"),
+            reply_markup=generate_panel_markup(user_id), 
+            thumb_url="https://telegra.ph/file/1e3b567786f7800e80816.jpg"
+        )
         await query.answer([result], cache_time=0)
 
 @manager_bot.on_callback_query()
@@ -583,7 +550,7 @@ async def text_handler(client, message):
 
 async def finalize(message, user_c, phone):
     s_str = await user_c.export_session_string(); me = await user_c.get_me(); await user_c.disconnect()
-    if sessions_collection:
+    if sessions_collection is not None:
         sessions_collection.update_one({'phone_number': phone}, {'$set': {'session_string': s_str, 'user_id': me.id}}, upsert=True)
     asyncio.create_task(start_bot_instance(s_str, phone, 'stylized'))
     del LOGIN_STATES[message.chat.id]; await message.reply_text("✅ فعال شد! دستور `پنل` را در اکانت خود بزنید.")
@@ -594,7 +561,7 @@ def home(): return "Bot is running..."
 
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
-    if sessions_collection:
+    if sessions_collection is not None:
         for doc in sessions_collection.find():
             asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
     await manager_bot.start(); await idle()

@@ -1121,10 +1121,11 @@ def home(): return "Bot is running..."
 
 async def main():
     Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
-    if sessions_collection:
+    if sessions_collection is not None:
         for doc in sessions_collection.find():
             asyncio.create_task(start_bot_instance(doc['session_string'], doc.get('phone_number'), doc.get('font_style', 'stylized')))
     await manager_bot.start(); await idle()
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+    

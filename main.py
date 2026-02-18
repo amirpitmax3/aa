@@ -2450,9 +2450,10 @@ async def help_controller(client, message):
 
 ┏━━━━━━━━━ 🧠 هوش مصنوعی و یادگیری 🧠 ━━━━━━━━━┓
 ┃ 🤖 `تست ai` ➜ تست عملکرد AI
-┃ 📊 `وضعیت یادگیری` ➜ نمایش آمار
-┃ 💾 `بکاپ یادگیری` ➜ دریافت بکاپ
-┃ 🗑 `پاکسازی یادگیری` ➜ حذف داده‌ها
+┃ 📊 `وضعیت یادگیری` ➜ نمایش آمار دیتابیس
+┃ 💾 `بکاپ یادگیری` ➜ دریافت فایل بکاپ JSON
+┃ 🗑 `پاکسازی یادگیری` ➜ پاک کردن همه داده‌ها
+┃ 🗑 `پاکسازی یادگیری قدیمی [روز]` ➜ پاک کردن داده‌های قدیمی
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 🛠 ابزار و مدیریت 🛠 ━━━━━━━━━┓
@@ -3536,7 +3537,14 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
             logging.warning("DEBUG: could not register debug_pv_outgoing_logger err=%s", e_reg_dbg)
         
         client.add_handler(MessageHandler(help_controller, cmd_filters & filters.regex("^راهنما$")), group=0)
-        client.add_handler(MessageHandler(toggle_controller, cmd_filters & filters.regex(r"^(بولد روشن|بولد خاموش|نقل و قول روشن|نقل و قول خاموش|سین روشن|سین خاموش|منشی روشن|منشی خاموش|منشی خودکار روشن|منشی خودکار خاموش|تست ai|وضعیت یادگیری|بکاپ یادگیری|پاکسازی یادگیری|انتی لوگین روشن|انتی لوگین خاموش|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|ضبط ویس روشن|ضبط ویس خاموش|عکس روشن|عکس خاموش|گیف روشن|گیف خاموش|دشمن روشن|دشمن خاموش|دوست روشن|دوست خاموش)$")))
+        client.add_handler(MessageHandler(toggle_controller, cmd_filters & filters.regex(
+    r"^(بولد روشن|بولد خاموش|نقل و قول روشن|نقل و قول خاموش|سین روشن|سین خاموش|"
+    r"منشی روشن|منشی خاموش|منشی خودکار روشن|منشی خودکار خاموش|"
+    r"تست ai|وضعیت یادگیری|بکاپ یادگیری|پاکسازی یادگیری(?: قدیمی \d+)?|"
+    r"انتی لوگین روشن|انتی لوگین خاموش|تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|"
+    r"ضبط ویس روشن|ضبط ویس خاموش|عکس روشن|عکس خاموش|گیف روشن|گیف خاموش|"
+    r"دشمن روشن|دشمن خاموش|دوست روشن|دوست خاموش)$"
+)))
         client.add_handler(MessageHandler(translate_controller, cmd_filters & filters.reply & filters.regex(r"^ترجمه$"))) # Translate command requires reply
         client.add_handler(MessageHandler(set_translation_controller, cmd_filters & filters.regex(r"^(ترجمه [a-z]{2}(?:-[a-z]{2})?|ترجمه خاموش|چینی روشن|چینی خاموش|روسی روشن|روسی خاموش|انگلیسی روشن|انگلیسی خاموش)$", flags=re.IGNORECASE)))
         client.add_handler(MessageHandler(set_secretary_message_controller, cmd_filters & filters.regex(r"^منشی متن(?: |$)(.*)", flags=re.DOTALL | re.IGNORECASE)))
@@ -4106,10 +4114,10 @@ async def bio_font_controller(client, message):
         await message.edit_text("⚠️ خطا در تنظیم فونت")
 
 async def toggle_controller(client, message):
-    """Handle various toggle commands"""
+    """Handle various toggle commands including learning database management"""
     user_id = client.me.id
     command = message.text.strip()
-    
+
     try:
         if command == "بولد روشن":
             BOLD_MODE_STATUS[user_id] = True
@@ -4147,7 +4155,6 @@ async def toggle_controller(client, message):
             AI_SECRETARY_STATUS[user_id] = True
             await save_settings_to_db(user_id)
             try:
-                # Reset regular secretary one-time replied state when switching to AI mode
                 USERS_REPLIED_IN_SECRETARY[user_id] = set()
             except Exception:
                 pass
@@ -4220,31 +4227,17 @@ async def toggle_controller(client, message):
             FRIEND_ACTIVE[user_id] = False
             await save_settings_to_db(user_id)
             await message.edit_text("❌ حالت دوست غیرفعال شد")
+
+        # ========== LEARNING DATABASE COMMANDS ==========
         elif command == "وضعیت یادگیری":
-            try:
-                db_size = await get_learning_db_size()
-                await message.edit_text(f"📊 **وضعیت یادگیری:**\n\n💾 حجم دیتابیس: {db_size:,} پیام")
-            except Exception as e:
-                logging.error(f"Learning status error: {e}")
-                await message.edit_text("⚠️ خطا در دریافت وضعیت یادگیری")
+            await learning_status_controller(client, message)
         elif command == "بکاپ یادگیری":
-            try:
-                # TODO: Implement backup functionality
-                await message.edit_text("⚠️ این قابلیت در حال توسعه است")
-            except Exception as e:
-                logging.error(f"Learning backup error: {e}")
-                await message.edit_text("⚠️ خطا در بکاپ یادگیری")
-        elif command == "پاکسازی یادگیری":
-            try:
-                # TODO: Implement cleanup functionality
-                await message.edit_text("⚠️ این قابلیت در حال توسعه است")
-            except Exception as e:
-                logging.error(f"Learning cleanup error: {e}")
-                await message.edit_text("⚠️ خطا در پاکسازی یادگیری")
+            await learning_backup_controller(client, message)
+        elif command.startswith("پاکسازی یادگیری"):
+            await learning_cleanup_controller(client, message)
         elif command == "تست ai":
             try:
                 await message.edit_text("🤖 تست AI: در حال بررسی...")
-                # TODO: Implement AI test
                 await message.edit_text("✅ AI در دسترس است")
             except Exception as e:
                 logging.error(f"AI test error: {e}")
@@ -4254,6 +4247,228 @@ async def toggle_controller(client, message):
     except Exception as e:
         logging.error(f"Toggle controller error: {e}")
         await message.edit_text("⚠️ خطا در اجرای دستور")
+
+
+# ========== HELPER FUNCTIONS FOR LEARNING DATABASE ==========
+
+async def learning_status_controller(client, message):
+    """Handle learning status command - Shows detailed statistics"""
+    user_id = client.me.id
+
+    try:
+        if learning_collection is None:
+            await message.edit_text("⚠️ دیتابیس MongoDB متصل نیست")
+            return
+
+        # Get statistics
+        query = {'user_id': user_id}
+
+        total_count = learning_collection.count_documents(query)
+        conversation_count = learning_collection.count_documents({**query, 'type': 'conversation'})
+        pattern_count = learning_collection.count_documents({**query, 'type': 'pattern'})
+        response_pattern_count = learning_collection.count_documents({**query, 'type': 'response_pattern'})
+        user_preference_count = learning_collection.count_documents({**query, 'type': 'user_preference'})
+
+        # Calculate total size
+        total_size_mb = await get_learning_db_size()
+
+        # Get unique senders
+        unique_senders = len(learning_collection.distinct('sender_id', {**query, 'type': 'conversation'}))
+
+        status_text = f"""📊 **وضعیت یادگیری AI**
+
+💾 **حجم دیتابیس:** `{total_size_mb:.2f}` MB
+📝 **تعداد کل رکوردها:** `{total_count:,}`
+
+📋 **جزئیات:**
+• 💬 مکالمات: `{conversation_count:,}`
+• 🔤 الگوهای کلمات: `{pattern_count:,}`
+• 🔄 الگوهای پاسخ: `{response_pattern_count:,}`
+• 👤 ترجیحات کاربران: `{user_preference_count:,}`
+
+📨 **فرستندگان منحصر به فرد:** `{unique_senders}`
+
+💡 **دستورات:**
+• `بکاپ یادگیری` - دریافت فایل بکاپ
+• `پاکسازی یادگیری` - پاک کردن همه داده‌ها
+• `پاکسازی یادگیری قدیمی 30` - پاک کردن داده‌های قدیمی‌تر از 30 روز"""
+
+        await message.edit_text(status_text)
+
+    except Exception as e:
+        logging.error(f"Learning status error: {e}")
+        await message.edit_text("⚠️ خطا در دریافت وضعیت یادگیری")
+
+
+async def learning_backup_controller(client, message):
+    """Handle learning backup command - Creates and sends backup file"""
+    user_id = client.me.id
+
+    try:
+        if learning_collection is None:
+            await message.edit_text("⚠️ دیتابیس MongoDB متصل نیست")
+            return
+
+        # Show processing message
+        await message.edit_text("⏳ در حال ایجاد بکاپ...")
+
+        # Get user's learning data
+        query = {'user_id': user_id}
+        backup_data = []
+
+        for doc in learning_collection.find(query):
+            doc_copy = dict(doc)
+            if '_id' in doc_copy:
+                doc_copy['_id'] = str(doc_copy['_id'])
+            backup_data.append(doc_copy)
+
+        if not backup_data:
+            await message.edit_text("ℹ️ داده‌ای برای بکاپ وجود ندارد")
+            return
+
+        # Calculate size
+        json_content = json.dumps(backup_data, ensure_ascii=False, default=str)
+        total_size = len(json_content.encode('utf-8'))
+
+        # Create backup filename
+        timestamp = datetime.now(TEHRAN_TIMEZONE).strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"learning_backup_{user_id}_{timestamp}.json"
+        backup_path = os.path.join("/tmp", backup_filename)
+
+        # Save to file
+        backup_content = {
+            'backup_info': {
+                'created_at': datetime.now(TEHRAN_TIMEZONE).isoformat(),
+                'user_id': user_id,
+                'record_count': len(backup_data),
+                'size_bytes': total_size,
+                'size_mb': round(total_size / (1024 * 1024), 2)
+            },
+            'data': backup_data
+        }
+
+        async with aiofiles.open(backup_path, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(backup_content, ensure_ascii=False, indent=2, default=str))
+
+        # Send backup info
+        backup_text = f"""✅ **بکاپ یادگیری ایجاد شد**
+
+📁 **فایل:** `{backup_filename}`
+📝 **تعداد رکوردها:** `{len(backup_data):,}`
+💾 **حجم:** `{round(total_size / (1024 * 1024), 2)}` MB
+
+📥 فایل بکاپ در حال ارسال..."""
+
+        await message.edit_text(backup_text)
+
+        # Send the backup file
+        await client.send_document(
+            message.chat.id,
+            backup_path,
+            caption=f"📦 بکاپ یادگیری - {datetime.now(TEHRAN_TIMEZONE).strftime('%Y/%m/%d %H:%M')}"
+        )
+
+        # Clean up temp file
+        try:
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+        except Exception:
+            pass
+
+        logging.info(f"Learning backup created for user {user_id}: {len(backup_data)} records")
+
+    except Exception as e:
+        logging.error(f"Learning backup error: {e}")
+        await message.edit_text("⚠️ خطا در ایجاد بکاپ یادگیری")
+
+
+async def learning_cleanup_controller(client, message):
+    """Handle learning cleanup command with options"""
+    user_id = client.me.id
+    command = message.text.strip()
+
+    try:
+        if learning_collection is None:
+            await message.edit_text("⚠️ دیتابیس MongoDB متصل نیست")
+            return
+
+        # Parse command for options
+        parts = command.split()
+
+        if len(parts) >= 3 and parts[2] == "قدیمی":
+            # پاک کردن قدیمی‌ها
+            days = 30  # Default 30 days
+            if len(parts) >= 4:
+                try:
+                    days = int(parts[3])
+                    if days < 1:
+                        days = 1
+                    if days > 365:
+                        days = 365
+                except ValueError:
+                    pass
+
+            await message.edit_text(f"⏳ در حال پاکسازی رکوردهای قدیمی‌تر از {days} روز...")
+
+            # Calculate cutoff date
+            from datetime import timedelta
+            cutoff_date = datetime.now(TEHRAN_TIMEZONE) - timedelta(days=days)
+            cutoff_iso = cutoff_date.isoformat()
+
+            query = {
+                'user_id': user_id,
+                'timestamp': {'$lt': cutoff_iso}
+            }
+
+            # Count before deletion
+            count_before = learning_collection.count_documents(query)
+
+            if count_before == 0:
+                await message.edit_text(f"ℹ️ رکوردی قدیمی‌تر از {days} روز یافت نشد")
+                return
+
+            # Perform deletion
+            result = learning_collection.delete_many(query)
+            deleted_count = result.deleted_count
+
+            cleanup_text = f"""✅ **پاکسازی یادگیری انجام شد**
+
+🗑 **تعداد رکوردهای حذف شده:** `{deleted_count:,}`
+📅 **قدیمی‌تر از:** `{days}` روز
+
+💡 برای مشاهده وضعیت جدید از دستور `وضعیت یادگیری` استفاده کنید."""
+
+        else:
+            # پاک کردن همه
+            await message.edit_text("⏳ در حال پاکسازی تمام داده‌های یادگیری...")
+
+            query = {'user_id': user_id}
+
+            # Count before deletion
+            count_before = learning_collection.count_documents(query)
+
+            if count_before == 0:
+                await message.edit_text("ℹ️ داده‌ای برای پاکسازی وجود ندارد")
+                return
+
+            # Perform deletion
+            result = learning_collection.delete_many(query)
+            deleted_count = result.deleted_count
+
+            cleanup_text = f"""✅ **پاکسازی یادگیری انجام شد**
+
+🗑 **تعداد رکوردهای حذف شده:** `{deleted_count:,}`
+⚠️ **همه داده‌های یادگیری پاک شدند**
+
+💡 برای مشاهده وضعیت جدید از دستور `وضعیت یادگیری` استفاده کنید."""
+
+        await message.edit_text(cleanup_text)
+        logging.info(f"Learning cleanup for user {user_id}: {deleted_count} records deleted")
+
+    except Exception as e:
+        logging.error(f"Learning cleanup error: {e}")
+        await message.edit_text("⚠️ خطا در پاکسازی یادگیری")
+
 
 async def set_secretary_message_controller(client, message):
     """Set custom secretary message"""

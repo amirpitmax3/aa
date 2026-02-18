@@ -23,12 +23,23 @@ from pyrogram.errors import (
     ReactionInvalid, MessageIdInvalid, MessageNotModified, PeerIdInvalid, UserNotParticipant, PhotoCropSizeSmall
 )
 
-# Additional imports for new features from self.txt
-# Removed external API dependencies as requested
+# Additional imports for new features
 import json
 import aiofiles
 import numpy
 import matplotlib.pyplot as plt
+
+# NEW: For GIF and Sticker creation
+from PIL import Image, ImageDraw, ImageFont
+import io
+
+# NEW: For video to GIF conversion
+try:
+    import imageio
+    IMAGEIO_AVAILABLE = True
+except ImportError:
+    IMAGEIO_AVAILABLE = False
+    logging.warning("imageio not available. Video to GIF conversion will be limited.")
 
 try:
     from pyrogram.raw import functions
@@ -36,14 +47,13 @@ except ImportError:
     logging.warning("Could not import 'pyrogram.raw.functions'. Anti-login feature might not work.")
     functions = None
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, request, render_template_string, redirect, session, url_for
 from threading import Thread
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import certifi
-
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
 
@@ -640,9 +650,9 @@ async def get_learned_response_suggestions(user_id: int, user_message: str, send
         return []
 
 async def get_ai_response(user_message: str, user_name: str = "کاربر", user_id: int = None, sender_id: int = None) -> str:
-    """Get AI response from Cloudflare Workers AI"""
+    """Get AI response from Cloudflare Workers AI - Enhanced smart responses"""
     try:
-        # Hard guard: handle insults with firm boundary-setting response (no profanity)
+        # Hard guard: handle insults with firm boundary-setting response
         try:
             msg_l = (user_message or "").lower()
             insult_keywords = [
@@ -654,41 +664,109 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
         except Exception:
             pass
 
+        # Smart predefined responses for common questions about Amir
+        msg_lower = (user_message or "").lower()
+
+        # Questions about Amir's presence/status
+        if any(phrase in msg_lower for phrase in ["امیر کجاست", "امیر کجاست؟", "امیر کو", "امیر نیست", "امیر آنلاین", "امیر کی میاد"]):
+            smart_responses = [
+                "امیر هنوز آنلاین نشده، وقتی بیاد پیام میدم.",
+                "فعلا امیر نیست، بعداً برمی‌گرده.",
+                "امیر الان آفلاینه، چیزی هست بگم برسونم؟",
+                "هنوز امیر نیومده، صبر کن برگرده.",
+                "امیر فعلا نیست، بعداً چک کن."
+            ]
+            import random
+            return random.choice(smart_responses)
+
+        # Questions about who the AI is
+        if any(phrase in msg_lower for phrase in ["تو کی هستی", "تو کیی", "کی هستی", "چی هستی", "رباتی", "هوش مصنوعی"]):
+            smart_responses = [
+                f"سلام {user_name}! من منشی امیرم. پیامت رو می‌رسونم بهش.",
+                f"سلام {user_name} جان! من اینجام که پیام‌ها رو بگیرم تا امیر بیاد.",
+                f"سلام! من اینجام که کمک کنم. امیر هنوز نیومده ولی پیامت رو نگه می‌دارم."
+            ]
+            import random
+            return random.choice(smart_responses)
+
+        # Greetings
+        if any(phrase in msg_lower for phrase in ["سلام", "درود", "سلام علیکم", "هی", "hi", "hello"]):
+            smart_responses = [
+                f"سلام {user_name}! خوبی؟",
+                f"سلام {user_name} جان! چه خبر؟",
+                f"درود {user_name}! امیدوارم حالت خوب باشه.",
+                f"سلام! خوش اومدی {user_name}."
+            ]
+            import random
+            return random.choice(smart_responses)
+
+        # How are you questions
+        if any(phrase in msg_lower for phrase in ["چطوری", "چه خبر", "خوبی", "حالت چطوره", "چطوری؟"]):
+            smart_responses = [
+                "من خوبم، مرسی که پرسیدی! تو چطوری؟",
+                "حالم خوبه، امیدوارم تو هم خوب باشی!",
+                "خوبم، دمت گرم! تو چی؟",
+                "مرسی، سرحالم! تو خوبی؟"
+            ]
+            import random
+            return random.choice(smart_responses)
+
+        # Thank you responses
+        if any(phrase in msg_lower for phrase in ["مرسی", "ممنون", "دمت گرم", "تشکر", "thanks", "thank you"]):
+            smart_responses = [
+                "خواهش می‌کنم! 🌹",
+                "قابلی نداشت! 💙",
+                "کاری نکردم که! 😊",
+                "خوشحالم که کمک کردم!"
+            ]
+            import random
+            return random.choice(smart_responses)
+
+        # Goodbye
+        if any(phrase in msg_lower for phrase in ["خداحافظ", "بای", "خدا نگهدار", "فعلا", "bye", "goodbye"]):
+            smart_responses = [
+                f"خداحافظ {user_name}! موفق باشی! 👋",
+                f"بای {user_name}! یه روز خوب داشته باشی! 🌟",
+                f"خدا نگهدار {user_name}! برمی‌گردم بعداً. 👋"
+            ]
+            import random
+            return random.choice(smart_responses)
+
         url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_AI_MODEL}"
-        
+
         headers = {
             "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
             "Content-Type": "application/json"
         }
-        
+
         # Check conversation history
         conversation_key = f"{user_id}_{sender_id}" if user_id and sender_id else str(sender_id or user_id or 0)
-        
+
         # Get recent conversation history
         if user_id not in AI_CONVERSATION_HISTORY:
             AI_CONVERSATION_HISTORY[user_id] = {}
         if sender_id not in AI_CONVERSATION_HISTORY[user_id]:
             AI_CONVERSATION_HISTORY[user_id][sender_id] = []
-        
+
         recent_messages = AI_CONVERSATION_HISTORY[user_id][sender_id]
         first_interaction = len(recent_messages) == 0
-        
+
         # Add current message to history
         recent_messages.append(f"کاربر: {user_message}")
         # Keep only last 6 messages for context
         if len(recent_messages) > 6:
             recent_messages = recent_messages[-6:]
             AI_CONVERSATION_HISTORY[user_id][sender_id] = recent_messages
-        
+
         # Build conversation context
         context = "\n".join(recent_messages[-3:]) if recent_messages else ""
-        
+
         # Get learned response suggestions
         learned_suggestions = await get_learned_response_suggestions(user_id, user_message, user_name)
         learning_context = ""
         if learned_suggestions:
             learning_context = f"\n\nپیشنهادات از تجربه‌های قبلی:\n" + "\n".join([f"- {suggestion}" for suggestion in learned_suggestions[:2]])
-        
+
         # Get user context from MongoDB
         user_context = ""
         if learning_collection is not None and not first_interaction:
@@ -700,52 +778,45 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
             if user_pref:
                 msg_count = user_pref.get('message_count', 0)
                 user_context = f"\n\nشناخت از {user_name}: شما {msg_count} بار باهم حرف زدید. این کاربر رو خوب بشناس و صمیمی باش."
-        
-        # Enhanced system prompt for better understanding
+
+        # Enhanced system prompt for smarter responses
         if first_interaction:
-            system_prompt = f"""تو یه انسان باهوش و ذکی هستی که منشی امیر شدی. مثل یه دوست باتجربه و فهمیده حرف بزن.
-
-فقط الان بگو: "سلام، من منشی امیر هستم!"
-بعدش دیگه هیچ وقت نگو منشی هستی. مثل یه دوست عادی حرف بزن.
-
-اسم شخص: {user_name}
+            system_prompt = f"""تو یه منشی باهوش و دوستانه هستی که برای امیر کار می‌کنی.
 
 قوانین مهم:
-- حداکثر دو جمله کوتاه بنویس
-- متن رو خوب بفهم و مناسب جواب بده
-- هیچ وقت نگو "چی گفتی" یا "منظورت چی بود" یا سوال پرسیدن برای روشن شدن
-- حتی اگر مبهم بود، بهترین برداشت ممکن رو انجام بده و مستقیم جواب بده
-- اگه پرسید امیر کجاست: "نمیدونم کجاست"
-- مثل آدم باهوش فکر کن و جواب بده"""
-        else:
-            # Check what was said recently
-            last_responses = [msg for msg in recent_messages if msg.startswith("منشی:")]
-            
-            system_prompt = f"""تو یه انسان باهوش و فهمیده هستی. مثل یه دوست ذکی و باتجربه فکر کن و حرف بزن.
+- مثل یه دوست صمیمی حرف بزن، نه مثل ربات
+- حداکثر ۲-۳ جمله کوتاه بگو
+- اگه پرسید امیر کجاست: بگو "امیر هنوز آنلاین نشده، وقتی بیاد پیام میدم"
+- اگه پرسید تو کی هستی: بگو "من منشی امیرم، پیامت رو می‌رسونم بهش"
+- هیچ وقت نگو "چی گفتی" یا "منظورت چی بود"
+- همیشه مودب و دوستانه باش
+- از ایموجی استفاده کن ولی نه خیلی زیاد
 
-اسم شخص: {user_name}
+اسم شخص: {user_name}"""
+        else:
+            system_prompt = f"""تو یه منشی باهوش و دوستانه هستی که برای امیر کار می‌کنی.
 
 آخرین مکالمه:
 {context}
 
 قوانین مهم:
-- حداکثر دو جمله کوتاه بگو
-- متن رو خوب بفهم و مناسب جواب بده
-- به زمینه مکالمه توجه کن و مرتبط جواب بده
-- هیچ وقت نگو "چی گفتی" یا "منظورت چی بود" یا سوال پرسیدن برای روشن شدن
-- حتی اگر مبهم بود، بهترین برداشت ممکن رو انجام بده و مستقیم جواب بده
-- اگه عصبانی باشه بگو: "چی شده؟"
-- اگه پرسید امیر کجاست: "نمیدونم کجاست"
-- مثل آدم باهوش فکر کن و جواب بده
-- هیچ وقت جواب تکراری نده"""
-        
+- مثل یه دوست صمیمی حرف بزن
+- حداکثر ۲-۳ جمله کوتاه
+- اگه پرسید امیر کجاست: بگو امیر هنوز نیومده
+- به زمینه مکالمه توجه کن
+- هیچ وقت نگو "چی گفتی" یا "منظورت چی بود"
+- مودب و دوستانه باش
+- از ایموجی استفاده کن
+
+اسم شخص: {user_name}"""
+
         payload = {
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ]
         }
-        
+
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as session:
             async with session.post(url, headers=headers, json=payload) as response:
                 if response.status == 200:
@@ -755,7 +826,7 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
                         if ai_response:
                             # Clean up response
                             ai_response = ai_response.strip()
-                            
+
                             # Remove AI/robot references
                             ai_response = ai_response.replace("هوش مصنوعی", "")
                             ai_response = ai_response.replace("مدل زبانی", "")
@@ -763,62 +834,58 @@ async def get_ai_response(user_message: str, user_name: str = "کاربر", user
                             ai_response = ai_response.replace("AI", "")
                             ai_response = ai_response.replace("ربات", "")
                             ai_response = ai_response.replace("دستیار", "")
-                            
-                            # Check if response is repetitive (same as last 2 responses)
+                            ai_response = ai_response.replace("من یک", "من")
+                            ai_response = ai_response.replace("من یه", "من")
+
+                            # Check if response is repetitive
                             last_responses = [msg.replace("منشی: ", "") for msg in recent_messages[-4:] if msg.startswith("منشی:")]
                             if ai_response in last_responses:
-                                # Response is repetitive, use smart fallback
                                 import random
                                 smart_fallbacks = [
                                     f"باشه {user_name}.",
                                     "باشه.",
                                     "متوجه شدم.",
-                                    "اوکی."
+                                    "اوکی.",
+                                    f"چطوری {user_name}؟"
                                 ]
                                 ai_response = random.choice(smart_fallbacks)
-                            
-                            # If response is empty or too short, provide contextual fallback
+
+                            # If response is empty or too short
                             if len(ai_response) < 3:
                                 import random
                                 if first_interaction:
-                                    ai_response = f"سلام، من منشی امیر هستم!"
+                                    ai_response = f"سلام {user_name}! من اینجام که پیام‌هات رو بگیرم."
                                 else:
                                     contextual_responses = [
                                         f"چطوری {user_name}؟",
                                         "چه خبر؟",
                                         "بگو ببینم",
-                                        "خوبه، ادامه بده",
-                                        "آره، گوش می‌دم"
+                                        "خوبه، ادامه بده"
                                     ]
                                     ai_response = random.choice(contextual_responses)
-                            
+
                             # Add response to conversation history
                             recent_messages.append(f"منشی: {ai_response}")
-                            
+
                             # Save conversation to learning database
                             if user_id and sender_id:
                                 await save_conversation_to_learning_db(user_id, sender_id, user_message, ai_response, user_name)
-                            
+
                             return ai_response
                         else:
                             logging.warning("AI response is empty")
-                            intro = "سلام! من منشی امیر هستم. " if first_interaction else "سلام! "
-                            return f"{intro}الان یکم مشکل دارم، بعداً دوباره تماس بگیر!"
+                            return f"سلام {user_name}! الان یکم مشکل دارم، بعداً دوباره تماس بگیر!"
                 else:
                     error_text = await response.text()
                     logging.error(f"Cloudflare AI API error {response.status}: {error_text}")
-                    intro = "سلام! من منشی امیر هستم. " if first_interaction else "سلام! "
-                    return f"{intro}الان یه مشکل فنی دارم، بعداً دوباره تماس بگیر!"
+                    return f"سلام {user_name}! الان یه مشکل فنی دارم، بعداً دوباره تماس بگیر!"
     except asyncio.TimeoutError:
         logging.error("Cloudflare AI request timeout")
-        intro = "سلام! من منشی امیر هستم. " if first_interaction else "سلام! "
-        return f"{intro}الان خط شلوغه، بعداً دوباره تماس بگیر!"
+        return f"سلام {user_name}! الان خط شلوغه، بعداً دوباره تماس بگیر!"
     except Exception as e:
         logging.error(f"Error calling Cloudflare AI: {e}")
-        intro = "سلام! من منشی امیر هستم. " if first_interaction else "سلام! "
-        return f"{intro}الان مشغولم، بعداً برمی‌گردم!"
+        return f"سلام {user_name}! الان مشغولم، بعداً برمی‌گردم!"
 
-# --- Translation Functions ---
 async def translate_text(text: str, target_lang: str = None) -> str:
     """Translate text using Google Translate API (like original system)"""
     try:
@@ -2432,10 +2499,21 @@ async def help_controller(client, message):
 
 ┏━━━━━━━━━ 🎉 سرگرمی 🎉 ━━━━━━━━━┓
 ┃ 💖 `قلب` / `heart` ➜ انیمیشن قلب
+┃ 🤍 `قلب خالی` / `emptyheart` ➜ پر شدن قلب
 ┃ 🎭 `فان love` / `fun love` ➜ انیمیشن قلب‌ها
 ┃ 🕐 `فان oclock` / `fun oclock` ➜ انیمیشن ساعت
 ┃ ⭐ `فان star` / `fun star` ➜ انیمیشن ستاره
 ┃ ❄ `فان snow` / `fun snow` ➜ انیمیشن برف
+┃ 🌙 `فان moon` / `fun moon` ➜ انیمیشن ماه
+┃ 🔥 `فان fire` / `fun fire` ➜ انیمیشن آتش
+┃ ⏳ `فان loading` / `fun loading` ➜ لودینگ
+┃ 🎲 `فان dice` / `fun dice` ➜ تاس
+┃ 💣 `فان bomb` / `fun bomb` ➜ بمب
+┃ 🌈 `فان rainbow` / `fun rainbow` ➜ رنگین کمان
+┃ ⌨️ `تایپ` / `typing` ➜ انیمیشن تایپ
+┃ 📊 `پروگرس` / `progress` ➜ نوار پیشرفت
+┃ 🌊 `موج` / `wave` ➜ انیمیشن موج
+┃ 💓 `ضربان` / `pulse` ➜ ضربان قلب
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 🛡 امنیت و منشی 🛡 ━━━━━━━━━┓
@@ -2454,6 +2532,11 @@ async def help_controller(client, message):
 ┃ 💾 `بکاپ یادگیری` ➜ دریافت فایل بکاپ JSON
 ┃ 🗑 `پاکسازی یادگیری` ➜ پاک کردن همه داده‌ها
 ┃ 🗑 `پاکسازی یادگیری قدیمی [روز]` ➜ پاک کردن داده‌های قدیمی
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━ 🎨 تبدیل مدیا 🎨 ━━━━━━━━━┓
+┃ 🎬 `گیف` (ریپلای) ➜ تبدیل به GIF
+┃ 🎭 `استیکر` (ریپلای) ➜ ساخت استیکر
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 🛠 ابزار و مدیریت 🛠 ━━━━━━━━━┓
@@ -3585,8 +3668,17 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         # Premium animations with simple Persian commands
         client.add_handler(MessageHandler(fun_controller, cmd_filters & filters.regex(r"^(fun|فان)\s+.+$")))
         client.add_handler(MessageHandler(heart_controller, cmd_filters & filters.regex(r"^(heart|قلب)$")))
+        # New entertainment handlers
+        client.add_handler(MessageHandler(empty_heart_controller, cmd_filters & filters.regex(r"^(emptyheart|قلب خالی|heart empty)$")))
+        client.add_handler(MessageHandler(typing_animation_controller, cmd_filters & filters.regex(r"^(typing|تایپ|type)$")))
+        client.add_handler(MessageHandler(progress_bar_controller, cmd_filters & filters.regex(r"^(progress|پروگرس|بار)$")))
+        client.add_handler(MessageHandler(wave_animation_controller, cmd_filters & filters.regex(r"^(wave|موج)$")))
+        client.add_handler(MessageHandler(pulse_animation_controller, cmd_filters & filters.regex(r"^(pulse|ضربان|heartbeat)$")))
         # Casino shortcuts
         client.add_handler(MessageHandler(crash_management_controller, cmd_filters & filters.regex("^(افزودن کراش|حذف کراش|لیست کراش|addcrash|delcrash|listcrash)$")))
+        # GIF and Sticker conversion handlers
+        client.add_handler(MessageHandler(gif_converter_controller, cmd_filters & filters.reply & filters.regex("^(گیف|gif)$")))
+        client.add_handler(MessageHandler(sticker_creator_controller, cmd_filters & filters.reply & filters.regex("^(استیکر|sticker)$")))
         client.add_handler(MessageHandler(set_crash_reply_controller, cmd_filters & filters.regex(r"^تنظیم متن کراش (.*)", flags=re.DOTALL | re.IGNORECASE)))
         client.add_handler(MessageHandler(list_crash_replies_controller, cmd_filters & filters.regex("^لیست متن کراش$")))
         client.add_handler(MessageHandler(delete_crash_reply_controller, cmd_filters & filters.regex(r"^حذف متن کراش(?: \d+)?$")))
@@ -3727,53 +3819,477 @@ async def tag_admins_controller(client, message):
                 pass
 
 async def fun_controller(client, message):
-    """Fun sticker animations (from 1.py)"""
+    """Fun sticker animations - Enhanced professional version"""
     try:
         command = message.text.strip()
-        # Parse: fun [type] or فان [type]
         match = re.match(r'^(fun|فان)\s+(.+)$', command, re.IGNORECASE)
         if not match:
             return
-        
+
         input_str = match.group(2).lower()
-        
+
         if 'love' in input_str:
             emoticons = ['🤍', '🖤', '💜', '💙', '💚', '💛', '🧡', '❤️', '🤎', '💖']
-        elif 'oclock' in input_str:
-            emoticons = ['🕐', '🕑', '🕒', '🕓', '🕔', '🕕', '🕖', '🕗', '🕘', '🕙', '🕚', '🕛', '🕜', '🕝', '🕞', '🕟', '🕠', '🕡', '🕢', '🕣', '🕤', '🕥', '🕦', '🕧']
+            random.shuffle(emoticons)
+            for emoji in emoticons:
+                await asyncio.sleep(0.8)
+                try:
+                    await message.edit_text(emoji)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+        elif 'oclock' in input_str or 'clock' in input_str:
+            emoticons = ['🕐', '🕑', '🕒', '🕓', '🕔', '🕕', '🕖', '🕗', '🕘', '🕙', '🕚', '🕛', 
+                        '🕜', '🕝', '🕞', '🕟', '🕠', '🕡', '🕢', '🕣', '🕤', '🕥', '🕦', '🕧']
+            for emoji in emoticons:
+                await asyncio.sleep(0.5)
+                try:
+                    await message.edit_text(emoji)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
         elif 'star' in input_str:
             emoticons = ['💥', '⚡️', '✨', '🌟', '⭐️', '💫']
+            random.shuffle(emoticons)
+            for emoji in emoticons:
+                await asyncio.sleep(0.7)
+                try:
+                    await message.edit_text(emoji)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
         elif 'snow' in input_str:
-            emoticons = ['❄️', '☃️', '⛄️']
-        else:
-            return
-        
-        random.shuffle(emoticons)
-        for emoji in emoticons:
-            await asyncio.sleep(1)
-            try:
-                await message.edit_text(emoji)
-            except (MessageNotModified, MessageIdInvalid):
-                pass
+            emoticons = ['❄️', '☃️', '⛄️', '🌨️', '☁️']
+            for emoji in emoticons:
+                await asyncio.sleep(1)
+                try:
+                    await message.edit_text(emoji)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+        elif 'moon' in input_str or 'ماه' in input_str:
+            emoticons = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘']
+            for emoji in emoticons:
+                await asyncio.sleep(0.8)
+                try:
+                    await message.edit_text(emoji)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+        elif 'fire' in input_str or 'آتش' in input_str:
+            emoticons = ['🔥', '🔥', '💥', '✨', '🔥', '⚡️', '🔥']
+            for emoji in emoticons:
+                await asyncio.sleep(0.6)
+                try:
+                    await message.edit_text(emoji)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+        elif 'loading' in input_str or 'لودینگ' in input_str:
+            bars = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬛⬛⬜⬜⬜', '⬛⬛⬛⬜⬜', '⬛⬛⬛⬛⬜', '⬛⬛⬛⬛⬛']
+            for bar in bars:
+                await asyncio.sleep(0.5)
+                try:
+                    await message.edit_text(f"⌛ Loading...\n{bar}")
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+        elif 'dice' in input_str or 'تاس' in input_str:
+            dices = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
+            for _ in range(10):
+                dice = random.choice(dices)
+                await asyncio.sleep(0.3)
+                try:
+                    await message.edit_text(f"🎲 {dice}")
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+        elif 'bomb' in input_str or 'بمب' in input_str:
+            sequence = ['💣', '💣 💨', '💣 💨 💨', '💥', '💥💥', '💥💥💥']
+            for item in sequence:
+                await asyncio.sleep(0.7)
+                try:
+                    await message.edit_text(item)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+        elif 'rainbow' in input_str or 'رنگین کمان' in input_str:
+            colors = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣']
+            for color in colors:
+                await asyncio.sleep(0.6)
+                try:
+                    await message.edit_text(f"🌈 {color}")
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
     except Exception as e:
         logging.warning(f"Fun controller error: {e}")
 
 async def heart_controller(client, message):
-    """Heart animation (from 1.py)"""
+    """Heart animation - Enhanced professional version"""
     try:
         command = message.text.strip()
         if command.lower() not in ['heart', 'قلب']:
             return
-        
-        for x in range(1, 4):
+
+        # Progressive heart filling animation
+        for x in range(1, 6):
             for i in range(1, 11):
                 try:
-                    await message.edit_text('➣ ' + str(x) + ' ❦' * i + ' | ' + str(10 * i) + '%')
-                    await asyncio.sleep(0.1)
+                    progress = '❤️' * i + '🤍' * (10 - i)
+                    await message.edit_text(f'➣ {progress} | {x * 20}%')
+                    await asyncio.sleep(0.15)
                 except (MessageNotModified, MessageIdInvalid):
                     pass
+
+        # Final big heart
+        try:
+            await message.edit_text('💖❤️💖❤️💖\n❤️💖❤️💖❤️\n💖❤️💖❤️💖')
+        except:
+            pass
+
     except Exception as e:
         logging.warning(f"Heart controller error: {e}")
+
+async def empty_heart_controller(client, message):
+    """Empty to full heart animation"""
+    try:
+        command = message.text.strip()
+        if command.lower() not in ['emptyheart', 'قلب خالی', 'heart empty']:
+            return
+
+        hearts = ['🤍🤍🤍🤍🤍🤍🤍🤍🤍🤍']
+        for i in range(1, 11):
+            heart_str = '❤️' * i + '🤍' * (10 - i)
+            try:
+                await message.edit_text(heart_str)
+                await asyncio.sleep(0.3)
+            except (MessageNotModified, MessageIdInvalid):
+                pass
+
+        # Pulse effect
+        for _ in range(3):
+            try:
+                await message.edit_text('❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️ 💓')
+                await asyncio.sleep(0.3)
+                await message.edit_text('❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️')
+                await asyncio.sleep(0.3)
+            except:
+                pass
+
+    except Exception as e:
+        logging.warning(f"Empty heart controller error: {e}")
+
+async def typing_animation_controller(client, message):
+    """Professional typing animation"""
+    try:
+        command = message.text.strip()
+        if command.lower() not in ['typing', 'تایپ', 'type']:
+            return
+
+        dots = ['', '.', '..', '...']
+        for _ in range(3):
+            for dot in dots:
+                try:
+                    await message.edit_text(f'⌨️ Typing{dot}')
+                    await asyncio.sleep(0.4)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+    except Exception as e:
+        logging.warning(f"Typing animation error: {e}")
+
+async def progress_bar_controller(client, message):
+    """Professional progress bar animation"""
+    try:
+        command = message.text.strip()
+        if command.lower() not in ['progress', 'پروگرس', 'بار']:
+            return
+
+        for i in range(0, 101, 5):
+            filled = int(i / 5)
+            empty = 20 - filled
+            bar = '█' * filled + '░' * empty
+            try:
+                await message.edit_text(f'📊 Progress: {bar} {i}%')
+                await asyncio.sleep(0.2)
+            except (MessageNotModified, MessageIdInvalid):
+                pass
+
+        try:
+            await message.edit_text('✅ Complete! ████████████████████ 100%')
+        except:
+            pass
+
+    except Exception as e:
+        logging.warning(f"Progress bar error: {e}")
+
+async def wave_animation_controller(client, message):
+    """Wave animation"""
+    try:
+        command = message.text.strip()
+        if command.lower() not in ['wave', 'موج']:
+            return
+
+        waves = ['〰️', '〜', '～', '〰️', '〜', '～']
+        for _ in range(5):
+            for wave in waves:
+                try:
+                    await message.edit_text(f'🌊 {wave} 🌊 {wave} 🌊')
+                    await asyncio.sleep(0.4)
+                except (MessageNotModified, MessageIdInvalid):
+                    pass
+
+    except Exception as e:
+        logging.warning(f"Wave animation error: {e}")
+
+async def pulse_animation_controller(client, message):
+    """Pulse/heartbeat animation"""
+    try:
+        command = message.text.strip()
+        if command.lower() not in ['pulse', 'ضربان', 'heartbeat']:
+            return
+
+        for _ in range(8):
+            try:
+                await message.edit_text('💓 ●')
+                await asyncio.sleep(0.3)
+                await message.edit_text('💓 ○')
+                await asyncio.sleep(0.3)
+            except (MessageNotModified, MessageIdInvalid):
+                pass
+
+    except Exception as e:
+        logging.warning(f"Pulse animation error: {e}")
+
+
+# ========== GIF AND STICKER CONVERSION FEATURES ==========
+
+async def gif_converter_controller(client, message):
+    """Convert replied photo/video to GIF"""
+    try:
+        if not message.reply_to_message:
+            await message.edit_text("⚠️ روی عکس یا ویدیو ریپلای کنید")
+            return
+
+        reply_msg = message.reply_to_message
+
+        # Check if media exists
+        if not reply_msg.media:
+            await message.edit_text("⚠️ پیام حاوی مدیا نیست")
+            return
+
+        await message.edit_text("⏳ در حال تبدیل به GIF...")
+
+        # Download the media
+        file_path = await reply_msg.download()
+
+        if not file_path:
+            await message.edit_text("⚠️ خطا در دانلود فایل")
+            return
+
+        # Convert to GIF
+        gif_path = await convert_to_gif(file_path)
+
+        if gif_path and os.path.exists(gif_path):
+            # Send as animation (GIF)
+            await client.send_animation(
+                message.chat.id,
+                gif_path,
+                reply_to_message_id=reply_msg.id
+            )
+            await message.delete()
+        else:
+            await message.edit_text("⚠️ خطا در تبدیل به GIF")
+
+        # Cleanup
+        try:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+            if gif_path and os.path.exists(gif_path) and gif_path != file_path:
+                os.remove(gif_path)
+        except Exception:
+            pass
+
+    except Exception as e:
+        logging.error(f"GIF converter error: {e}")
+        await message.edit_text("⚠️ خطا در تبدیل به GIF")
+
+
+async def sticker_creator_controller(client, message):
+    """Convert replied message/photo to sticker with 'darkself' name"""
+    try:
+        if not message.reply_to_message:
+            await message.edit_text("⚠️ روی پیام یا عکس ریپلای کنید")
+            return
+
+        reply_msg = message.reply_to_message
+        await message.edit_text("⏳ در حال ساخت استیکر...")
+
+        sticker_path = None
+
+        # If it's a photo
+        if reply_msg.photo:
+            file_path = await reply_msg.download()
+            if file_path:
+                sticker_path = await create_sticker_from_image(file_path, "darkself")
+
+        # If it's text
+        elif reply_msg.text:
+            sticker_path = await create_sticker_from_text(reply_msg.text, "darkself")
+
+        # If it's a document/image
+        elif reply_msg.document:
+            file_path = await reply_msg.download()
+            if file_path:
+                sticker_path = await create_sticker_from_image(file_path, "darkself")
+
+        if sticker_path and os.path.exists(sticker_path):
+            # Send as sticker
+            await client.send_sticker(
+                message.chat.id,
+                sticker_path,
+                reply_to_message_id=reply_msg.id
+            )
+            await message.delete()
+        else:
+            await message.edit_text("⚠️ خطا در ساخت استیکر")
+
+        # Cleanup
+        try:
+            if sticker_path and os.path.exists(sticker_path):
+                os.remove(sticker_path)
+        except Exception:
+            pass
+
+    except Exception as e:
+        logging.error(f"Sticker creator error: {e}")
+        await message.edit_text("⚠️ خطا در ساخت استیکر")
+
+
+async def convert_to_gif(input_path: str) -> str:
+    """Convert image/video to GIF format"""
+    try:
+        output_path = input_path.rsplit('.', 1)[0] + '.gif'
+
+        # Check if it's an image
+        if input_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+            # Convert image to GIF using PIL
+            with Image.open(input_path) as img:
+                # Resize if too large (Telegram limit for GIF is 1280x1280)
+                max_size = 512
+                if img.width > max_size or img.height > max_size:
+                    ratio = min(max_size / img.width, max_size / img.height)
+                    new_size = (int(img.width * ratio), int(img.height * ratio))
+                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+                # Save as GIF
+                img.save(output_path, 'GIF', optimize=True)
+            return output_path
+
+        # If it's already a GIF
+        elif input_path.lower().endswith('.gif'):
+            return input_path
+
+        # For video files, return original (would need ffmpeg for proper conversion)
+        else:
+            return input_path
+
+    except Exception as e:
+        logging.error(f"Convert to GIF error: {e}")
+        return None
+
+
+async def create_sticker_from_image(image_path: str, pack_name: str = "darkself") -> str:
+    """Create a sticker-compatible image from any image"""
+    try:
+        output_path = image_path.rsplit('.', 1)[0] + '_sticker.png'
+
+        with Image.open(image_path) as img:
+            # Convert to RGBA if necessary
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+
+            # Resize to sticker size (max 512x512)
+            max_size = 512
+            if img.width > max_size or img.height > max_size:
+                ratio = min(max_size / img.width, max_size / img.height)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+            # Save as PNG (required for stickers)
+            img.save(output_path, 'PNG', optimize=True)
+
+        return output_path
+
+    except Exception as e:
+        logging.error(f"Create sticker from image error: {e}")
+        return None
+
+
+async def create_sticker_from_text(text: str, pack_name: str = "darkself") -> str:
+    """Create a sticker image from text"""
+    try:
+        # Create a new image with transparent background
+        img_size = 512
+        img = Image.new('RGBA', (img_size, img_size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Try to use a Persian font, fallback to default
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 40)
+        except:
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 40)
+            except:
+                font = ImageFont.load_default()
+
+        # Wrap text to fit image
+        lines = []
+        words = text.split()
+        current_line = ""
+
+        for word in words:
+            test_line = current_line + " " + word if current_line else word
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            if bbox[2] <= img_size - 40:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+
+        if current_line:
+            lines.append(current_line)
+
+        # Calculate vertical position to center text
+        line_height = 50
+        total_height = len(lines) * line_height
+        start_y = (img_size - total_height) // 2
+
+        # Draw text
+        for i, line in enumerate(lines):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+            x = (img_size - text_width) // 2
+            y = start_y + i * line_height
+
+            # Draw with outline effect
+            for dx in [-2, -1, 0, 1, 2]:
+                for dy in [-2, -1, 0, 1, 2]:
+                    if dx != 0 or dy != 0:
+                        draw.text((x + dx, y + dy), line, font=font, fill=(0, 0, 0, 255))
+            draw.text((x, y), line, font=font, fill=(255, 255, 255, 255))
+
+        # Save
+        output_path = f"/tmp/sticker_{int(time.time())}.png"
+        img.save(output_path, 'PNG')
+
+        return output_path
+
+    except Exception as e:
+        logging.error(f"Create sticker from text error: {e}")
+        return None
 
 
 async def crash_management_controller(client, message):
@@ -4824,7 +5340,7 @@ async def text_mode_controller(client, message):
         mode_map = {
             'بولد': 'bold', 'ایتالیک': 'italic', 'زیرخط': 'underline', 
             'کد': 'code', 'اسپویلر': 'spoiler',
-            'منشن': 'mention', 'هشتگ': 'hashtag', 'معکوس': 'reverse', 
+            'هشتگ': 'hashtag', 'معکوس': 'reverse', 
             'تدریجی': 'part'
         }
         
@@ -4843,7 +5359,7 @@ async def text_mode_controller(client, message):
             TEXT_EDIT_MODES[user_id] = {
                 'hashtag': 'off', 'bold': 'off', 'italic': 'off', 'delete': 'off',
                 'code': 'off', 'underline': 'off', 'reverse': 'off', 'part': 'off',
-                'mention': 'off', 'spoiler': 'off'
+                'spoiler': 'off'
             }
         
         # Convert Persian status to English
@@ -4861,7 +5377,7 @@ async def text_mode_controller(client, message):
         mode_display = {
             'bold': 'بولد', 'italic': 'ایتالیک', 'underline': 'زیرخط',
             'delete': 'خط خورده', 'code': 'کد', 'spoiler': 'اسپویلر',
-            'mention': 'منشن', 'hashtag': 'هشتگ', 'reverse': 'معکوس',
+            'hashtag': 'هشتگ', 'reverse': 'معکوس',
             'part': 'تدریجی'
         }
         
@@ -4909,7 +5425,7 @@ async def text_mode_handler(client, message):
         elif modes.get('code') == 'on':
             await message.edit_text(f'`{original_text}`')
         elif modes.get('underline') == 'on':
-            await message.edit_text(f'__{original_text}__')
+            await message.edit_text(f'<u>{original_text}</u>')
         elif modes.get('reverse') == 'on':
             await message.edit_text(original_text[::-1])
         elif modes.get('part') == 'on':  # This is the gradual/تدریجی mode

@@ -4871,7 +4871,8 @@ async def welcome_message_handler(client, message):
     command = message.text.lower()
     
     try:
-        if '/setwelcome' in command:
+        # تنظیم خوش‌آمد
+        if 'تنظیم خوش' in command or 'تنظیم خوش‌آمد' in command:
             # Set welcome message
             if not message.reply_to_message:
                 await message.edit_text("⚠️ روی متن، عکس یا فیلم ریپلای کنید")
@@ -4907,7 +4908,8 @@ async def welcome_message_handler(client, message):
             
             await message.edit_text("✅ پیام خوش‌آمد تنظیم شد")
         
-        elif '/toggle_welcome' in command or 'toggle' in command:
+        # تغییر خوش‌آمد
+        elif 'تغییر خوش' in command or 'تغییر خوش‌آمد' in command:
             # Toggle welcome message
             if user_id in WELCOME_MESSAGE_CONFIG and message.chat.id in WELCOME_MESSAGE_CONFIG[user_id]:
                 current_status = WELCOME_MESSAGE_CONFIG[user_id][message.chat.id].get('enabled', True)
@@ -4927,7 +4929,8 @@ async def welcome_message_handler(client, message):
             else:
                 await message.edit_text("⚠️ پیام خوش‌آمد تعریف نشده است")
         
-        elif '/removewelcome' in command or 'remove' in command:
+        # حذف خوش‌آمد
+        elif 'حذف خوش' in command or 'حذف خوش‌آمد' in command:
             # Remove welcome message
             if user_id in WELCOME_MESSAGE_CONFIG:
                 WELCOME_MESSAGE_CONFIG[user_id].pop(message.chat.id, None)
@@ -5011,16 +5014,18 @@ async def bulk_delete_handler(client, message):
             
             try:
                 async for dialog in client.get_dialogs():
-                    if dialog.chat and dialog.chat.type == ChatType.SUPERGROUP:
-                        try:
-                            await client.leave_chat(dialog.chat.id)
-                            deleted_count += 1
-                        except Exception as e:
-                            logging.warning(f"Could not leave channel {dialog.chat.id}: {e}")
-                            failed_count += 1
-                        
-                        # Rate limiting
-                        await asyncio.sleep(0.3)
+                    if dialog.chat:
+                        # کانال‌های broadcast (نه supergroup)
+                        if dialog.chat.type == ChatType.SUPERGROUP and dialog.chat.is_channel:
+                            try:
+                                await client.leave_chat(dialog.chat.id)
+                                deleted_count += 1
+                            except Exception as e:
+                                logging.warning(f"Could not leave channel {dialog.chat.id}: {e}")
+                                failed_count += 1
+                            
+                            # Rate limiting
+                            await asyncio.sleep(0.3)
             except Exception as e:
                 logging.error(f"Error getting dialogs: {e}")
             
@@ -5033,13 +5038,23 @@ async def bulk_delete_handler(client, message):
             
             try:
                 async for dialog in client.get_dialogs():
-                    if dialog.chat and dialog.chat.type == ChatType.GROUP:
-                        try:
-                            await client.leave_chat(dialog.chat.id)
-                            deleted_count += 1
-                        except Exception as e:
-                            logging.warning(f"Could not leave group {dialog.chat.id}: {e}")
-                            failed_count += 1
+                    if dialog.chat:
+                        # گروه‌ها (supergroup اما نه channel)
+                        if dialog.chat.type == ChatType.SUPERGROUP and not dialog.chat.is_channel:
+                            try:
+                                await client.leave_chat(dialog.chat.id)
+                                deleted_count += 1
+                            except Exception as e:
+                                logging.warning(f"Could not leave group {dialog.chat.id}: {e}")
+                                failed_count += 1
+                        # گروه‌های عادی (GROUP type)
+                        elif dialog.chat.type == ChatType.GROUP:
+                            try:
+                                await client.leave_chat(dialog.chat.id)
+                                deleted_count += 1
+                            except Exception as e:
+                                logging.warning(f"Could not leave group {dialog.chat.id}: {e}")
+                                failed_count += 1
                         
                         await asyncio.sleep(0.3)
             except Exception as e:
@@ -5058,7 +5073,7 @@ async def bulk_delete_handler(client, message):
                         try:
                             # بررسی اینکه بات است یا نه
                             user = await client.get_users(dialog.chat.id)
-                            if user and user.is_bot:
+                            if user and hasattr(user, 'is_bot') and user.is_bot:
                                 await client.block_user(dialog.chat.id)
                                 deleted_count += 1
                         except Exception as e:
@@ -5101,11 +5116,18 @@ async def create_channel_handler(client, message):
         status = await message.reply(f"⏳ درحال ایجاد کانال `{channel_name}`...")
         
         try:
-            # ایجاد کانال (supergroup)
-            new_channel = await client.create_supergroup(
-                title=channel_name,
-                description=f"کانال ایجاد‌شده توسط ربات"
+            # استفاده از Pyrogram raw API برای ایجاد کانال (broadcast channel)
+            result = await client.invoke(
+                functions.channels.CreateChannel(
+                    title=channel_name,
+                    about=f"کانال ایجاد‌شده توسط ربات"
+                )
             )
+            
+            new_channel = result.chats[0] if result.chats else None
+            if not new_channel:
+                await status.edit_text(f"❌ خطا در ایجاد کانال")
+                return
             
             # ذخیره در دیتابیس
             if feature_settings_collection is not None:
@@ -5131,7 +5153,7 @@ async def create_channel_handler(client, message):
             logging.info(f"Channel created: {channel_name} (ID: {new_channel.id})")
             
         except Exception as e:
-            await status.edit_text(f"❌ خطا در ایجاد کانال: {str(e)[:50]}")
+            await status.edit_text(f"❌ خطا در ایجاد کانال: {str(e)[:80]}")
             logging.error(f"Create channel error: {e}")
     
     except Exception as e:

@@ -7112,34 +7112,8 @@ def run_asyncio_loop():
              if not cleanup_completed:
                  logging.warning("Cleanup sequence did not fully complete before loop closure.")
 
-# ========== NEW CONTROLLER FUNCTIONS FOR REQUESTED FEATURES ==========
-
-async def mute_duration_controller(client, message):
-    """Mute user with duration (5-1000 minutes) - deletes all their messages"""
-    try:
-        if not message.reply_to_message or not message.reply_to_message.from_user:
-            await message.edit_text("⚠️ برای سکوت کردن، باید روی پیام کاربر مورد نظر ریپلای کنید.")
-            return
-        
-        # Extract duration from command
-        match = re.match(r"^سکوت (\d+)$", message.text.strip())
-        if not match:
-            await message.edit_text("⚠️ فرمت: `سکوت [5-1000]` (دقیقه)")
-            return
-        
-        duration = int(match.group(1))
-        if duration < 5 or duration > 1000:
-            await message.edit_text("⚠️ مدت زمان سکوت باید بین 5 تا 1000 دقیقه باشد.")
-            return
-        
-        user_id = client.me.id
-        target_id = message.reply_to_message.from_user.id
-        chat_id = message.chat.id
-        
-        # Add to database with duration
-        db_add_muted_user(user_id, target_id, chat_id, duration)
-        
-        target_info = f"کاربر `{target_id}`"
+# --- Main Execution ---
+if __name__ == "__main__":
     loop_thread = Thread(target=run_asyncio_loop, name="AsyncioLoopThread", daemon=True)
     loop_thread.start()
 

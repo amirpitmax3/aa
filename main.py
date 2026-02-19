@@ -3826,14 +3826,14 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         client.add_handler(MessageHandler(price_converter_handler, cmd_filters & filters.regex(r"^>\s*.+")))
         
         # Welcome message handlers
-        client.add_handler(MessageHandler(welcome_message_handler, cmd_filters & filters.regex(r"^(تنظیم خوش.آمد|تغییر خوش.آمد|حذف خوش.آمد)$")))
+        client.add_handler(MessageHandler(welcome_message_handler, cmd_filters & filters.regex(r"^(تنظیم خوش|تغییر خوش|حذف خوش|خوش.*آمد)")))
         
         # Bulk delete handlers - دستورات حذف انبوهی
-        client.add_handler(MessageHandler(bulk_delete_handler, cmd_filters & filters.regex(r"^(ترک تمام کانال ها|ترک تمام گروه ها|بلاک تمام بات ها)$")))
+        client.add_handler(MessageHandler(bulk_delete_handler, cmd_filters & filters.regex(r"^(ترک تمام کانال|ترک تمام گروه|بلاک تمام بات)")))
         
         # Channel and Group creation handlers
-        client.add_handler(MessageHandler(create_channel_handler, cmd_filters & filters.regex(r"^ساخت کانال\s+.+$")))
-        client.add_handler(MessageHandler(create_group_handler, cmd_filters & filters.regex(r"^ساخت گروه\s+.+$")))
+        client.add_handler(MessageHandler(create_channel_handler, cmd_filters & filters.regex(r"^ساخت کانال\s+")))
+        client.add_handler(MessageHandler(create_group_handler, cmd_filters & filters.regex(r"^ساخت گروه\s+")))
         
         # Channel comment setup handler
         client.add_handler(MessageHandler(set_channel_comment_handler, cmd_filters & filters.regex(r"^/comment_setup\s+.+$")))
@@ -4871,9 +4871,9 @@ async def welcome_message_handler(client, message):
     command = message.text.lower()
     
     try:
-        # تنظیم خوش‌آمد
-        if 'تنظیم خوش' in command or 'تنظیم خوش‌آمد' in command:
-            # Set welcome message
+        # بررسی نوع دستور
+        if 'تنظیم خوش' in command or 'تنظیم' in command:
+            # تنظیم خوش‌آمد - ریپلای برای گرفتن پیام
             if not message.reply_to_message:
                 await message.edit_text("⚠️ روی متن، عکس یا فیلم ریپلای کنید")
                 return
@@ -4883,11 +4883,10 @@ async def welcome_message_handler(client, message):
             
             config = {
                 'enabled': True,
-                'text': message.reply_to_message.text or '',
+                'text': message.reply_to_message.text or message.reply_to_message.caption or 'خوش آمدید!',
             }
             
             if message.reply_to_message.photo:
-                # Get largest photo
                 photo = message.reply_to_message.photo[-1]
                 config['photo'] = photo.file_id
             elif message.reply_to_message.video:
@@ -4895,7 +4894,6 @@ async def welcome_message_handler(client, message):
             
             WELCOME_MESSAGE_CONFIG[user_id][message.chat.id] = config
             
-            # Save to database
             if welcome_messages_collection is not None:
                 try:
                     welcome_messages_collection.update_one(
@@ -4908,43 +4906,62 @@ async def welcome_message_handler(client, message):
             
             await message.edit_text("✅ پیام خوش‌آمد تنظیم شد")
         
-        # تغییر خوش‌آمد
-        elif 'تغییر خوش' in command or 'تغییر خوش‌آمد' in command:
-            # Toggle welcome message
+        elif 'تغییر خوش' in command or 'حذف خوش' in command or 'خاموش' in command:
+            # تغییر/حذف خوش‌آمد
             if user_id in WELCOME_MESSAGE_CONFIG and message.chat.id in WELCOME_MESSAGE_CONFIG[user_id]:
-                current_status = WELCOME_MESSAGE_CONFIG[user_id][message.chat.id].get('enabled', True)
-                WELCOME_MESSAGE_CONFIG[user_id][message.chat.id]['enabled'] = not current_status
-                
+                if 'حذف' in command or 'خاموش' in command:
+                    WELCOME_MESSAGE_CONFIG[user_id].pop(message.chat.id, None)
+                    if welcome_messages_collection is not None:
+                        try:
+                            welcome_messages_collection.delete_one({
+                                'user_id': user_id,
+                                'chat_id': message.chat.id
+                            })
+                        except Exception as db_err:
+                            logging.warning(f"DB welcome delete failed: {db_err}")
+                    await message.edit_text("✅ پیام خوش‌آمد حذف شد")
+                else:
+                    # تغییر - هنوز نیاز به ریپلای دارد
+                    if not message.reply_to_message:
+                        await message.edit_text("⚠️ روی متن، عکس یا فیلم ریپلای کنید")
+                        return
+                    
+                    config = WELCOME_MESSAGE_CONFIG[user_id][message.chat.id]
+                    config['text'] = message.reply_to_message.text or message.reply_to_message.caption or config.get('text', '')
+                    
+                    if message.reply_to_message.photo:
+                        config['photo'] = message.reply_to_message.photo[-1].file_id
+                    elif message.reply_to_message.video:
+                        config['video'] = message.reply_to_message.video.file_id
+                    
+                    if welcome_messages_collection is not None:
+                        try:
+                            welcome_messages_collection.update_one(
+                                {'user_id': user_id, 'chat_id': message.chat.id},
+                                {'$set': config}
+                            )
+                        except Exception as db_err:
+                            logging.warning(f"DB welcome update failed: {db_err}")
+                    
+                    await message.edit_text("✅ پیام خوش‌آمد تغییر یافت")
+            else:
+                await message.edit_text("⚠️ پیام خوش‌آمد تعریف نشده است")
+        
+        elif 'روشن' in command:
+            # روشن کردن خوش‌آمد
+            if user_id in WELCOME_MESSAGE_CONFIG and message.chat.id in WELCOME_MESSAGE_CONFIG[user_id]:
+                WELCOME_MESSAGE_CONFIG[user_id][message.chat.id]['enabled'] = True
                 if welcome_messages_collection is not None:
                     try:
                         welcome_messages_collection.update_one(
                             {'user_id': user_id, 'chat_id': message.chat.id},
-                            {'$set': {'enabled': not current_status}}
+                            {'$set': {'enabled': True}}
                         )
                     except Exception as db_err:
                         logging.warning(f"DB welcome toggle failed: {db_err}")
-                
-                status_text = "روشن" if not current_status else "خاموش"
-                await message.edit_text(f"✅ پیام خوش‌آمد {status_text} شد")
+                await message.edit_text("✅ پیام خوش‌آمد روشن شد")
             else:
                 await message.edit_text("⚠️ پیام خوش‌آمد تعریف نشده است")
-        
-        # حذف خوش‌آمد
-        elif 'حذف خوش' in command or 'حذف خوش‌آمد' in command:
-            # Remove welcome message
-            if user_id in WELCOME_MESSAGE_CONFIG:
-                WELCOME_MESSAGE_CONFIG[user_id].pop(message.chat.id, None)
-            
-            if welcome_messages_collection is not None:
-                try:
-                    welcome_messages_collection.delete_one({
-                        'user_id': user_id,
-                        'chat_id': message.chat.id
-                    })
-                except Exception as db_err:
-                    logging.warning(f"DB welcome delete failed: {db_err}")
-            
-            await message.edit_text("✅ پیام خوش‌آمد حذف شد")
     
     except Exception as e:
         logging.error(f"Welcome message handler error: {e}")
@@ -5016,16 +5033,17 @@ async def bulk_delete_handler(client, message):
                 async for dialog in client.get_dialogs():
                     if dialog.chat:
                         # کانال‌های broadcast (نه supergroup)
-                        if dialog.chat.type == ChatType.SUPERGROUP and dialog.chat.is_channel:
+                        is_channel = getattr(dialog.chat, 'is_channel', False)
+                        if is_channel or (dialog.chat.type == ChatType.SUPERGROUP and getattr(dialog.chat, 'is_channel', False)):
                             try:
                                 await client.leave_chat(dialog.chat.id)
                                 deleted_count += 1
+                                logging.info(f"Left channel: {dialog.chat.title} ({dialog.chat.id})")
                             except Exception as e:
                                 logging.warning(f"Could not leave channel {dialog.chat.id}: {e}")
                                 failed_count += 1
                             
-                            # Rate limiting
-                            await asyncio.sleep(0.3)
+                            await asyncio.sleep(0.2)
             except Exception as e:
                 logging.error(f"Error getting dialogs: {e}")
             
@@ -5040,23 +5058,17 @@ async def bulk_delete_handler(client, message):
                 async for dialog in client.get_dialogs():
                     if dialog.chat:
                         # گروه‌ها (supergroup اما نه channel)
-                        if dialog.chat.type == ChatType.SUPERGROUP and not dialog.chat.is_channel:
+                        is_channel = getattr(dialog.chat, 'is_channel', False)
+                        if (dialog.chat.type == ChatType.SUPERGROUP and not is_channel) or dialog.chat.type == ChatType.GROUP:
                             try:
                                 await client.leave_chat(dialog.chat.id)
                                 deleted_count += 1
-                            except Exception as e:
-                                logging.warning(f"Could not leave group {dialog.chat.id}: {e}")
-                                failed_count += 1
-                        # گروه‌های عادی (GROUP type)
-                        elif dialog.chat.type == ChatType.GROUP:
-                            try:
-                                await client.leave_chat(dialog.chat.id)
-                                deleted_count += 1
+                                logging.info(f"Left group: {dialog.chat.title} ({dialog.chat.id})")
                             except Exception as e:
                                 logging.warning(f"Could not leave group {dialog.chat.id}: {e}")
                                 failed_count += 1
                         
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.2)
             except Exception as e:
                 logging.error(f"Error getting dialogs: {e}")
             
@@ -5073,14 +5085,15 @@ async def bulk_delete_handler(client, message):
                         try:
                             # بررسی اینکه بات است یا نه
                             user = await client.get_users(dialog.chat.id)
-                            if user and hasattr(user, 'is_bot') and user.is_bot:
+                            if user and getattr(user, 'is_bot', False):
                                 await client.block_user(dialog.chat.id)
                                 deleted_count += 1
+                                logging.info(f"Blocked bot: {user.first_name} ({dialog.chat.id})")
                         except Exception as e:
                             logging.warning(f"Could not block bot {dialog.chat.id}: {e}")
                             failed_count += 1
                         
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.2)
             except Exception as e:
                 logging.error(f"Error getting dialogs: {e}")
             

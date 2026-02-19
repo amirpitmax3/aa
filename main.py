@@ -102,10 +102,6 @@ MONGO_URI = "mongodb+srv://ourbitpitmax878_db_user:5XnjkEGcXavZLkEv@cluster0.quo
 mongo_client = None
 sessions_collection = None
 learning_collection = None
-muted_users_collection = None
-welcome_messages_collection = None
-channel_comments_collection = None
-feature_settings_collection = None
 AI_MAX_TOTAL_DB_SIZE_MB = 100  # Total MongoDB learning database size limit
 if MONGO_URI and "<db_password>" not in MONGO_URI:
     try:
@@ -114,31 +110,12 @@ if MONGO_URI and "<db_password>" not in MONGO_URI:
         db = mongo_client['telegram_self_bot']
         sessions_collection = db['sessions']
         learning_collection = db['ai_learning']  # Collection for AI learning data
-        muted_users_collection = db['muted_users']  # Collection for muted users
-        welcome_messages_collection = db['welcome_messages']  # Collection for welcome messages
-        channel_comments_collection = db['channel_comments']  # Collection for channel comment settings
-        feature_settings_collection = db['feature_settings']  # Collection for feature on/off status
-        
-        # Create indexes for better performance
-        try:
-            sessions_collection.create_index("user_id")
-            muted_users_collection.create_index([("user_id", 1), ("chat_id", 1)])
-            welcome_messages_collection.create_index([("user_id", 1), ("chat_id", 1)])
-            channel_comments_collection.create_index([("user_id", 1), ("channel_id", 1)])
-            feature_settings_collection.create_index("user_id")
-        except Exception as idx_err:
-            logging.warning(f"Could not create database indexes: {idx_err}")
-        
         logging.info("Successfully connected to MongoDB!")
     except Exception as e:
         logging.error(f"Could not connect to MongoDB: {e}")
         mongo_client = None
         sessions_collection = None
         learning_collection = None
-        muted_users_collection = None
-        welcome_messages_collection = None
-        channel_comments_collection = None
-        feature_settings_collection = None
 else:
     logging.warning("MONGO_URI is not configured correctly. Please set your password. Session persistence will be disabled.")
 
@@ -262,15 +239,6 @@ SECRET_SAVE_PROCESSED = {}  # {user_id: set of (chat_id, message_id)} - پیام
 ORIGINAL_NAMES = {}  # {user_id: str} - نام اصلی کاربر برای ساعت
 GHOST_MODE_STATUS = {}  # {user_id: bool} - حالت شبح (بدون نام)
 ORIGINAL_FIRST_NAMES = {}  # {user_id: str} - نام اصلی برای حالت شبح
-
-# --- New Feature Variables ---
-CHANNEL_COMMENT_STATUS = {}  # {user_id: bool} - کامنت خودکار روی کانال
-CHANNEL_COMMENT_CONFIG = {}  # {user_id: {channel_id: {'enabled': bool, 'linked_group': int, 'comment_text': str}}}
-MUTED_USERS_MAP = {}  # {user_id: {chat_id: {muted_user_id: unmute_time}}} - track muted users per group
-WELCOME_MESSAGE_CONFIG = {}  # {user_id: {chat_id: {'text': str, 'photo': file_id, 'video': file_id, 'enabled': bool}}}
-BULK_DELETE_PENDING = {}  # {user_id: {'action': 'channels/groups/bots', 'confirmed': bool}}
-PRICE_CONVERSION_ENABLED = {}  # {user_id: bool}
-FEATURE_STATES_CACHE = {}  # {user_id: {feature_name: bool}} - cache for feature states
 
 async def auto_seen_handler(client, message):
     user_id = client.me.id
@@ -435,68 +403,6 @@ async def load_user_settings_from_db(user_id: int):
 
     except Exception as e:
         logging.error(f"Error loading settings db: {e}")
-
-async def load_new_features_from_db(user_id: int):
-    """Load new features (mutes, welcome messages, channel comments) from database"""
-    try:
-        # Load muted users
-        if muted_users_collection is not None:
-            muted_docs = muted_users_collection.find({'user_id': user_id})
-            for doc in muted_docs:
-                chat_id = doc.get('chat_id')
-                muted_user_id = doc.get('muted_user_id')
-                unmute_time = doc.get('unmute_time')
-                
-                if user_id not in MUTED_USERS_MAP:
-                    MUTED_USERS_MAP[user_id] = {}
-                if chat_id not in MUTED_USERS_MAP[user_id]:
-                    MUTED_USERS_MAP[user_id][chat_id] = {}
-                
-                MUTED_USERS_MAP[user_id][chat_id][muted_user_id] = unmute_time
-        
-        # Load welcome messages
-        if welcome_messages_collection is not None:
-            welcome_docs = welcome_messages_collection.find({'user_id': user_id})
-            for doc in welcome_docs:
-                chat_id = doc.get('chat_id')
-                
-                if user_id not in WELCOME_MESSAGE_CONFIG:
-                    WELCOME_MESSAGE_CONFIG[user_id] = {}
-                
-                config = {
-                    'enabled': doc.get('enabled', False),
-                    'text': doc.get('text', ''),
-                }
-                if doc.get('photo'):
-                    config['photo'] = doc.get('photo')
-                if doc.get('video'):
-                    config['video'] = doc.get('video')
-                
-                WELCOME_MESSAGE_CONFIG[user_id][chat_id] = config
-        
-        # Load channel comment settings
-        if channel_comments_collection is not None:
-            comment_docs = channel_comments_collection.find({'user_id': user_id})
-            for doc in comment_docs:
-                channel_id = doc.get('channel_id')
-                
-                if user_id not in CHANNEL_COMMENT_CONFIG:
-                    CHANNEL_COMMENT_CONFIG[user_id] = {}
-                
-                CHANNEL_COMMENT_CONFIG[user_id][channel_id] = {
-                    'enabled': doc.get('enabled', False),
-                    'linked_group': doc.get('linked_group'),
-                    'comment_text': doc.get('comment_text', COMMENT_TEXT.get(user_id, "اول! 🔥"))
-                }
-                
-                # Update global status
-                if doc.get('enabled'):
-                    CHANNEL_COMMENT_STATUS[user_id] = True
-        
-        logging.info(f"✅ Loaded new features for user {user_id} from database")
-    
-    except Exception as e:
-        logging.error(f"Error loading new features from database: {e}")
 
 # --- AI Learning Database Functions ---
 async def save_conversation_to_learning_db(user_id: int, sender_id: int, user_message: str, ai_response: str, sender_name: str):
@@ -1225,7 +1131,7 @@ async def make_clock_image(h, m, s, read_path, write_path):
         logging.error(f"Error creating clock image: {e}")
         return None
 
-COMMAND_REGEX = r"^(تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|ضبط ویس روشن|ضبط ویس خاموش|عکس روشن|عکس خاموش|گیف روشن|گیف خاموش|ترجمه [a-z]{2}(?:-[a-z]{2})?|ترجمه خاموش|چینی روشن|چینی خاموش|روسی روشن|روسی خاموش|انگلیسی روشن|انگلیسی خاموش|بولد روشن|بولد خاموش|ایتالیک روشن|ایتالیک خاموش|زیرخط روشن|زیرخط خاموش|خط خورده روشن|خط خورده خاموش|کد روشن|کد خاموش|اسپویلر روشن|اسپویلر خاموش|منشن روشن|منشن خاموش|هشتگ روشن|هشتگ خاموش|معکوس روشن|معکوس خاموش|تدریجی روشن|تدریجی خاموش|سین روشن|سین خاموش|ساعت روشن|ساعت خاموش|ساعت بیو روشن|ساعت بیو خاموش|تاریخ بیو روشن|تاریخ بیو خاموش|نوع تاریخ میلادی|نوع تاریخ شمسی|فونت|فونت \d+|فونت ساعت بیو|فونت ساعت بیو \d+|منشی روشن|منشی خاموش|منشی متن(?: |$)(.*)|انتی لوگین روشن|انتی لوگین خاموش|پیوی قفل|پیوی باز|ذخیره روشن|ذخیره خاموش|تکرار \d+( \d+)?|حذف همه|حذف(?: \d+)?|دشمن روشن|دشمن خاموش|تنظیم دشمن|حذف دشمن|پاکسازی لیست دشمن|لیست دشمن|لیست متن دشمن|تنظیم متن دشمن .*|حذف متن دشمن(?: \d+)?|دوست روشن|دوست خاموش|تنظیم دوست|حذف دوست|پاکسازی لیست دوست|لیست دوست|لیست متن دوست|تنظیم متن دوست .*|حذف متن دوست(?: \d+)?|بلاک روشن|بلاک خاموش|قیمت روشن|قیمت خاموش|خوش‌آمد روشن|خوش‌آمد خاموش|کامنت کانال روشن|کامنت کانال خاموش|سکوت روشن|سکوت خاموش|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|ping|پینگ|راهنما|ترجمه|تگ|تگ ادمین ها|فان .*|قلب|حذف \d+|افزودن کراش|حذف کراش|لیست کراش|تنظیم متن کراش .*|لیست متن کراش|حذف متن کراش(?: \d+)?|کامنت روشن|کامنت خاموش|تنظیم گروه کامنت|حذف گروه کامنت|لیست گروه کامنت|حذف لیست گروه کامنت|کامنت .*|اسپم .*|فلود .*|دانلود|بن|پین|آن پین|شماره من|ساخت کانال .*|ساخت گروه .*)$"
+COMMAND_REGEX = r"^(تایپ روشن|تایپ خاموش|بازی روشن|بازی خاموش|ضبط ویس روشن|ضبط ویس خاموش|عکس روشن|عکس خاموش|گیف روشن|گیف خاموش|ترجمه [a-z]{2}(?:-[a-z]{2})?|ترجمه خاموش|چینی روشن|چینی خاموش|روسی روشن|روسی خاموش|انگلیسی روشن|انگلیسی خاموش|بولد روشن|بولد خاموش|ایتالیک روشن|ایتالیک خاموش|زیرخط روشن|زیرخط خاموش|خط خورده روشن|خط خورده خاموش|کد روشن|کد خاموش|اسپویلر روشن|اسپویلر خاموش|منشن روشن|منشن خاموش|هشتگ روشن|هشتگ خاموش|معکوس روشن|معکوس خاموش|تدریجی روشن|تدریجی خاموش|سین روشن|سین خاموش|ساعت روشن|ساعت خاموش|ساعت بیو روشن|ساعت بیو خاموش|تاریخ بیو روشن|تاریخ بیو خاموش|نوع تاریخ میلادی|نوع تاریخ شمسی|فونت|فونت \d+|فونت ساعت بیو|فونت ساعت بیو \d+|منشی روشن|منشی خاموش|منشی متن(?: |$)(.*)|انتی لوگین روشن|انتی لوگین خاموش|پیوی قفل|پیوی باز|ذخیره روشن|ذخیره خاموش|تکرار \d+( \d+)?|حذف همه|حذف(?: \d+)?|دشمن روشن|دشمن خاموش|تنظیم دشمن|حذف دشمن|پاکسازی لیست دشمن|لیست دشمن|لیست متن دشمن|تنظیم متن دشمن .*|حذف متن دشمن(?: \d+)?|دوست روشن|دوست خاموش|تنظیم دوست|حذف دوست|پاکسازی لیست دوست|لیست دوست|لیست متن دوست|تنظیم متن دوست .*|حذف متن دوست(?: \d+)?|بلاک روشن|بلاک خاموش|سکوت روشن|سکوت خاموش|ریاکشن .*|ریاکشن خاموش|کپی روشن|کپی خاموش|ping|پینگ|راهنما|ترجمه|تگ|تگ ادمین ها|فان .*|قلب|حذف \d+|افزودن کراش|حذف کراش|لیست کراش|تنظیم متن کراش .*|لیست متن کراش|حذف متن کراش(?: \d+)?|کامنت روشن|کامنت خاموش|تنظیم گروه کامنت|حذف گروه کامنت|لیست گروه کامنت|حذف لیست گروه کامنت|کامنت .*|اسپم .*|فلود .*|دانلود|بن|پین|آن پین|شماره من)$"
 
 def stylize_time(time_str: str, style: str) -> str:
     font_map = FONT_STYLES.get(style, FONT_STYLES["stylized"])
@@ -2633,50 +2539,17 @@ async def help_controller(client, message):
 ┃ 🎭 `استیکر` (ریپلای) ➜ ساخت استیکر
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-┏━━━━━━━━━ 💹 قیمت و ارز 💹 ━━━━━━━━━┓
-┃ 💱 `قیمت دلار` - نرخ دلار به تومان
-┃ 💎 `قیمت طلا` - قیمت طلا به تومان
-┃ 🪙 `قیمت تتر` - نرخ تتر به تومان
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-┏━━━━━━━━━ 🔇 سیستم سکوت 🔇 ━━━━━━━━━┓
-┃ 🔕 `سکوت کردن [دقیقه]` (ریپلای)
-┃ 🔊 `رفع سکوت` (ریپلای)
-┃ 📋 `لیست سکوت`
-┃ 🧹 `پاک کن سکوت`
-┃ ℹ️ پیام‌های سکوت شده خودکار حذف می‌شود
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-┏━━━━━━━━━ 👋 خوش‌آمدگویی 👋 ━━━━━━━━━┓
-┃ 👋 `خوش‌آمد روشن` ➜ روشن کردن خوش‌آمد
-┃ 🔇 `خوش‌آمد خاموش` ➜ خاموش کردن خوش‌آمد
-┃ ℹ️ متن: سلام [نام] به گروه [نام گروه] خوش امدید 🌸
-┃ 🔧 فقط ادمین یا اونر گروه می‌تواند تنظیم کند
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-┏━━━━━━━━━ 🗑 حذف انبوهی 🗑 ━━━━━━━━━┓
-┃ 📤 `ترک تمام کانال‌ها`
-┃ 🏃 `ترک تمام گروه‌ها`
-┃ 🤖 `بلاک تمام بات‌ها`
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-┏━━━━━━━━━ 🏗 ساخت کانال و گروه 🏗 ━━━━━━━━━┓
-┃ 📢 `ساخت کانال [اسم]`
-┃ 👥 `ساخت گروه [اسم]`
-┃ 💡 مثال: `ساخت کانال اخبار` یا `ساخت گروه دوستان`
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
 ┏━━━━━━━━━ 🛠 ابزار و مدیریت 🛠 ━━━━━━━━━┓
-┃ 🏷 `تگ` / `تگ همه`
-┃ 👑 `تگ ادمین ها`
-┃ 📱 `شماره من`
-┃ ⬇ `دانلود` (ریپلای)
-┃ 🚫 `بن` (ریپلای)
-┃ 📌 `پین` (ریپلای)
-┃ 📍 `آن پین`
-┃ 📤 `اسپم [متن] [تعداد]`
-┃ 🌊 `فلود [متن] [تعداد]`
-┃ 📡 `پینگ`
+┃ 🏷 `تگ` / `tagall` ➜ تگ تمام اعضا
+┃ 👑 `تگ ادمین ها` / `tagadmins` ➜ تگ ادمین‌ها
+┃ 📱 `شماره من` ➜ نمایش شماره
+┃ ⬇ `دانلود` (ریپلای) ➜ دانلود فایل
+┃ 🚫 `بن` (ریپلای) ➜ بن کاربر
+┃ 📌 `پین` (ریپلای) ➜ پین پیام
+┃ 📍 `آن پین` ➜ آن‌پین کردن
+┃ 📤 `اسپم [متن] [تعداد]` ➜ ارسال تکراری
+┃ 🌊 `فلود [متن] [تعداد]` ➜ فلود سریع
+┃ 📡 `ping` ➜ بررسی سرعت
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ╔═══════════════════════════════════╗
@@ -3690,8 +3563,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         MUTED_USERS.setdefault(user_id, set())
         # Load settings from DB if available (will overwrite defaults if exist in DB)
         await load_user_settings_from_db(user_id)
-        # Load new features from DB
-        await load_new_features_from_db(user_id)
         # ORIGINAL_PROFILE_DATA should not be setdefault, it's temporary during copy mode
         if user_id not in ORIGINAL_PROFILE_DATA: ORIGINAL_PROFILE_DATA[user_id] = {}
         
@@ -3805,35 +3676,9 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         client.add_handler(MessageHandler(pulse_animation_controller, cmd_filters & filters.regex(r"^(pulse|ضربان|heartbeat)$")))
         # Casino shortcuts
         client.add_handler(MessageHandler(crash_management_controller, cmd_filters & filters.regex("^(افزودن کراش|حذف کراش|لیست کراش|addcrash|delcrash|listcrash)$")))
-        # GIF and Sticker conversion handlers - فقط ریپلای
+        # GIF and Sticker conversion handlers
         client.add_handler(MessageHandler(gif_converter_controller, cmd_filters & filters.reply & filters.regex("^(گیف|gif)$")))
         client.add_handler(MessageHandler(sticker_creator_controller, cmd_filters & filters.reply & filters.regex("^(استیکر|sticker)$")))
-        
-        # Mute/Unmute handlers
-        client.add_handler(MessageHandler(mute_handler, cmd_filters & filters.reply & filters.regex(r"^سکوت کردن\s+\d+$")))
-        client.add_handler(MessageHandler(unmute_handler, cmd_filters & filters.reply & filters.regex("^رفع سکوت$")))
-        client.add_handler(MessageHandler(list_muted_handler, cmd_filters & filters.regex("^لیست سکوت$")))
-        client.add_handler(MessageHandler(clear_muted_handler, cmd_filters & filters.regex("^پاک کن سکوت$")))
-        
-        # Price conversion handler - دستورات قیمت
-        client.add_handler(MessageHandler(price_converter_handler, cmd_filters & filters.regex(r"^(قیمت دلار|قیمت طلا|قیمت تتر)")))
-        
-        # Welcome message handlers
-        client.add_handler(MessageHandler(welcome_message_handler, cmd_filters & filters.regex(r"^(تنظیم خوش|تغییر خوش|حذف خوش|خوش.*آمد)")))
-        
-        # Bulk delete handlers - دستورات حذف انبوهی
-        client.add_handler(MessageHandler(bulk_delete_handler, cmd_filters & filters.regex(r"^(ترک تمام کانال|ترک تمام گروه|بلاک تمام بات)")))
-        
-        # Channel and Group creation handlers
-        client.add_handler(MessageHandler(create_channel_handler, cmd_filters & filters.regex(r"^ساخت کانال\s+")))
-        client.add_handler(MessageHandler(create_group_handler, cmd_filters & filters.regex(r"^ساخت گروه\s+")))
-        
-        # Channel comment setup handler
-        client.add_handler(MessageHandler(set_channel_comment_handler, cmd_filters & filters.regex(r"^/comment_setup\s+.+$")))
-        
-        # NEW: New member welcome handler (for service messages)
-        client.add_handler(MessageHandler(new_member_welcome_handler, filters.service & ~filters.bot & ~filters.me), group=2)
-        
         client.add_handler(MessageHandler(set_crash_reply_controller, cmd_filters & filters.regex(r"^تنظیم متن کراش (.*)", flags=re.DOTALL | re.IGNORECASE)))
         client.add_handler(MessageHandler(list_crash_replies_controller, cmd_filters & filters.regex("^لیست متن کراش$")))
         client.add_handler(MessageHandler(delete_crash_reply_controller, cmd_filters & filters.regex(r"^حذف متن کراش(?: \d+)?$")))
@@ -3879,19 +3724,6 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
             client.add_handler(MessageHandler(channel_comment_handler, filters.me & channel_filter), group=2)
         except Exception as e_channel_comment_reg:
             logging.warning("DEBUG: could not register channel_comment_handler err=%s", e_channel_comment_reg)
-        
-        # Comment handler for discussion groups (پیام‌های forwarded از کانال)
-        try:
-            discussion_group_filter = filters.create(
-                lambda _, __, m: bool(
-                    getattr(m, "outgoing", False) and 
-                    getattr(m.chat, "type", None) == ChatType.SUPERGROUP and 
-                    getattr(m, "reply_to_message", None) is not None
-                )
-            )
-            client.add_handler(MessageHandler(comment_handler, discussion_group_filter), group=2)
-        except Exception as e_comment_reg:
-            logging.warning("DEBUG: could not register comment_handler err=%s", e_comment_reg)
         
         # Reaction handler for secret save - only if MessageReactionUpdatedHandler is available
         if MessageReactionUpdatedHandler is not None:
@@ -4234,307 +4066,132 @@ async def pulse_animation_controller(client, message):
 # ========== GIF AND STICKER CONVERSION FEATURES ==========
 
 async def gif_converter_controller(client, message):
-    """تبدیل ویدیو به GIF - فقط ویدیو"""
+    """Convert replied photo/video to GIF"""
     try:
         if not message.reply_to_message:
-            await message.reply("❌ روی یک **فیلم/ویدیو** ریپلای کنید")
+            await message.edit_text("⚠️ روی عکس یا ویدیو ریپلای کنید")
             return
 
         reply_msg = message.reply_to_message
 
-        # فقط ویدیو قبول کن
-        if not reply_msg.video and not reply_msg.animation:
-            await message.reply("❌ فقط روی **فیلم/ویدیو** کار می‌کنم")
+        # Check if media exists
+        if not reply_msg.media:
+            await message.edit_text("⚠️ پیام حاوی مدیا نیست")
             return
 
-        status = await message.reply("⏳ درحال تبدیل به GIF...")
+        await message.edit_text("⏳ در حال تبدیل به GIF...")
 
+        # Download the media
+        file_path = await reply_msg.download()
+
+        if not file_path:
+            await message.edit_text("⚠️ خطا در دانلود فایل")
+            return
+
+        # Convert to GIF
+        gif_path = await convert_to_gif(file_path)
+
+        if gif_path and os.path.exists(gif_path):
+            # Send as animation (GIF)
+            await client.send_animation(
+                message.chat.id,
+                gif_path,
+                reply_to_message_id=reply_msg.id
+            )
+            await message.delete()
+        else:
+            await message.edit_text("⚠️ خطا در تبدیل به GIF")
+
+        # Cleanup
         try:
-            # دانلود ویدیو
-            video_path = await reply_msg.download()
-            
-            if not video_path:
-                await status.edit_text("❌ خطا در دانلود ویدیو")
-                return
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+            if gif_path and os.path.exists(gif_path) and gif_path != file_path:
+                os.remove(gif_path)
+        except Exception:
+            pass
 
-            # تبدیل به GIF با imageio
-            if IMAGEIO_AVAILABLE:
-                import imageio
-                reader = imageio.get_reader(video_path)
-                
-                # برای ویدیوهای طولانی، هر N فریم را بگیر
-                frames = [frame for i, frame in enumerate(reader) if i % 2 == 0]
-                
-                if len(frames) == 0:
-                    await status.edit_text("❌ ویدیو خالی یا نامعتبر است")
-                    return
-                
-                gif_path = f"temp_{message.from_user.id}_{int(time.time())}.gif"
-                imageio.mimsave(gif_path, frames[:100], duration=0.1)  # حداکثر 100 فریم
-                
-                # ارسال GIF
-                await client.send_animation(
-                    message.chat.id,
-                    gif_path,
-                    reply_to_message_id=reply_msg.id
-                )
-                await message.delete()
-                await status.delete()
-                
-                # پاکسازی
-                if os.path.exists(video_path):
-                    os.remove(video_path)
-                if os.path.exists(gif_path):
-                    os.remove(gif_path)
-            else:
-                await status.edit_text("❌ ابزار تبدیل GIF دسترس‌پذیر نیست (imageio)")
-                if os.path.exists(video_path):
-                    os.remove(video_path)
-                return
-                
-        except Exception as e:
-            logging.error(f"GIF conversion error: {e}")
-            await status.edit_text(f"❌ خطا: {str(e)[:50]}")
-            
     except Exception as e:
-        logging.error(f"GIF controller error: {e}")
-        await message.reply(f"❌ خطا: {str(e)[:50]}")
+        logging.error(f"GIF converter error: {e}")
+        await message.edit_text("⚠️ خطا در تبدیل به GIF")
 
 
 async def sticker_creator_controller(client, message):
-    """ساخت پک استیکر و اضافه کردن استیکرها"""
+    """Convert replied message/photo to sticker with 'darkself' name"""
     try:
-        user_id = message.from_user.id
-        
         if not message.reply_to_message:
-            await message.reply("❌ روی یک **عکس یا متن** ریپلای کنید")
+            await message.edit_text("⚠️ روی پیام یا عکس ریپلای کنید")
             return
 
         reply_msg = message.reply_to_message
-        status = await message.reply("⏳ درحال ساخت استیکر...")
+        await message.edit_text("⏳ در حال ساخت استیکر...")
 
         sticker_path = None
-        
-        # اگر عکس باشد
+
+        # If it's a photo
         if reply_msg.photo:
             file_path = await reply_msg.download()
             if file_path:
-                from PIL import Image
-                
-                # باز کردن عکس
-                img = Image.open(file_path)
-                
-                # تغییر سایز به 512x512
-                img = img.resize((512, 512))
-                
-                # تبدیل به PNG اگر RGBA نباشد
-                if img.mode != 'RGBA':
-                    img = img.convert('RGBA')
-                
-                sticker_path = f"sticker_{user_id}_{int(time.time())}.png"
-                img.save(sticker_path, 'PNG')
-                
-                os.remove(file_path)
-        
-        # اگر متن باشد
+                sticker_path = await create_sticker_from_image(file_path, "darkself")
+
+        # If it's text
         elif reply_msg.text:
-            from PIL import Image, ImageDraw, ImageFont
-            
-            # ساخت عکس
-            img = Image.new('RGBA', (512, 512), (255, 255, 255, 0))
-            draw = ImageDraw.Draw(img)
-            
-            text = reply_msg.text[:50]
-            
-            # انتخاب فونت
-            try:
-                font = ImageFont.truetype("arial.ttf", 60)
-            except:
-                try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 60)
-                except:
-                    font = ImageFont.load_default()
-            
-            # محاسبه موقعیت
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            x = (512 - text_width) // 2
-            y = (512 - text_height) // 2
-            
-            # نوشتن متن با حاشیه
-            for dx in [-2, -1, 0, 1, 2]:
-                for dy in [-2, -1, 0, 1, 2]:
-                    if dx != 0 or dy != 0:
-                        draw.text((x + dx, y + dy), text, fill=(0, 0, 0, 200), font=font)
-            draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
-            
-            sticker_path = f"sticker_{user_id}_{int(time.time())}.png"
-            img.save(sticker_path, 'PNG')
-        
-        else:
-            await status.edit_text("❌ فقط **عکس یا متن** پذیرفته می‌شود")
-            return
-        
-        if not sticker_path:
-            await status.edit_text("❌ خطا در ساخت استیکر")
-            return
-        
-        # ارسال استیکر
-        try:
-            sticker = await client.send_sticker(
+            sticker_path = await create_sticker_from_text(reply_msg.text, "darkself")
+
+        # If it's a document/image
+        elif reply_msg.document:
+            file_path = await reply_msg.download()
+            if file_path:
+                sticker_path = await create_sticker_from_image(file_path, "darkself")
+
+        if sticker_path and os.path.exists(sticker_path):
+            # Send as sticker
+            await client.send_sticker(
                 message.chat.id,
                 sticker_path,
                 reply_to_message_id=reply_msg.id
             )
-            
-            if sticker:
-                await status.edit_text(
-                    f"✅ **استیکر ساخته شد!**\n\n"
-                    f"🎨 برای اضافه کردن به پک:\n"
-                    f"روی استیکر راست‌کلیک → "
-                    f"پیام → اضافه به پک 'amir'"
-                )
-                await message.delete()
-            else:
-                await status.edit_text("❌ خطا در ارسال استیکر")
-        except Exception as e:
-            logging.error(f"Error sending sticker: {e}")
-            await status.edit_text(f"❌ خطا: {str(e)[:50]}")
-        
-        # پاکسازی
+            await message.delete()
+        else:
+            await message.edit_text("⚠️ خطا در ساخت استیکر")
+
+        # Cleanup
         try:
             if sticker_path and os.path.exists(sticker_path):
                 os.remove(sticker_path)
-        except:
+        except Exception:
             pass
-        
+
     except Exception as e:
         logging.error(f"Sticker creator error: {e}")
-        await message.reply(f"❌ خطا: {str(e)[:50]}")
+        await message.edit_text("⚠️ خطا در ساخت استیکر")
 
 
-async def convert_to_gif(input_path: str, text_overlay: str = None, image_overlay: str = None) -> str:
-    """Convert image/video to actual animated GIF format with optional overlays"""
+async def convert_to_gif(input_path: str) -> str:
+    """Convert image/video to GIF format"""
     try:
         output_path = input_path.rsplit('.', 1)[0] + '.gif'
 
         # Check if it's an image
         if input_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
-            # Convert image to animated GIF using PIL
+            # Convert image to GIF using PIL
             with Image.open(input_path) as img:
-                # Convert to RGB if necessary
-                if img.mode in ('RGBA', 'LA', 'P'):
-                    img = img.convert('RGB')
-                
-                # Resize if too large (Telegram limit)
+                # Resize if too large (Telegram limit for GIF is 1280x1280)
                 max_size = 512
                 if img.width > max_size or img.height > max_size:
                     ratio = min(max_size / img.width, max_size / img.height)
                     new_size = (int(img.width * ratio), int(img.height * ratio))
                     img = img.resize(new_size, Image.Resampling.LANCZOS)
-                
-                # Add text overlay if provided
-                if text_overlay:
-                    draw = ImageDraw.Draw(img)
-                    try:
-                        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
-                    except:
-                        font = ImageFont.load_default()
-                    
-                    # Draw text with outline
-                    bbox = draw.textbbox((0, 0), text_overlay, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    x = (img.width - text_width) // 2
-                    y = img.height - 50
-                    
-                    # Outline
-                    for dx in [-2, -1, 0, 1, 2]:
-                        for dy in [-2, -1, 0, 1, 2]:
-                            if dx != 0 or dy != 0:
-                                draw.text((x + dx, y + dy), text_overlay, font=font, fill=(0, 0, 0))
-                    draw.text((x, y), text_overlay, font=font, fill=(255, 255, 255))
-                
-                # Add image overlay if provided
-                if image_overlay and os.path.exists(image_overlay):
-                    try:
-                        overlay_img = Image.open(image_overlay)
-                        if overlay_img.mode == 'RGBA':
-                            overlay_img = overlay_img.convert('RGBA')
-                        else:
-                            overlay_img = overlay_img.convert('RGB')
-                        
-                        # Resize overlay to 30% of main image
-                        overlay_size = int(min(img.width, img.height) * 0.3)
-                        overlay_img = overlay_img.resize((overlay_size, overlay_size), Image.Resampling.LANCZOS)
-                        
-                        # Paste overlay
-                        if overlay_img.mode == 'RGBA':
-                            img.paste(overlay_img, (10, 10), overlay_img)
-                        else:
-                            img.paste(overlay_img, (10, 10))
-                    except Exception as e:
-                        logging.warning(f"Could not apply image overlay: {e}")
-                
-                # Create animated GIF by duplicating frames for animation effect
-                frames = [img] * 5  # 5 frames for animation
-                
-                # Save as animated GIF
-                frames[0].save(
-                    output_path, 
-                    'GIF',
-                    save_all=True,
-                    append_images=frames[1:],
-                    duration=200,
-                    loop=0,
-                    optimize=False
-                )
+
+                # Save as GIF
+                img.save(output_path, 'GIF', optimize=True)
             return output_path
 
         # If it's already a GIF
         elif input_path.lower().endswith('.gif'):
             return input_path
 
-        # For video files, try to convert with ffmpeg
-        elif input_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-            try:
-                import subprocess
-                # Use ffmpeg to convert video to GIF
-                output_path = input_path.rsplit('.', 1)[0] + '.gif'
-                
-                # Generate palette first for better quality
-                palette_path = input_path.rsplit('.', 1)[0] + '_palette.png'
-                
-                # Create palette
-                subprocess.run([
-                    'ffmpeg', '-i', input_path, 
-                    '-vf', 'fps=10,scale=512:-1:flags=lanczos,palettegen',
-                    '-y', palette_path
-                ], capture_output=True, timeout=60)
-                
-                # Generate GIF using palette
-                subprocess.run([
-                    'ffmpeg', '-i', input_path,
-                    '-i', palette_path,
-                    '-filter_complex', 'fps=10,scale=512:-1:flags=lanczos[x];[x][1:v]paletteuse=alpha_threshold=128',
-                    '-y', output_path
-                ], capture_output=True, timeout=120)
-                
-                # Cleanup palette
-                try:
-                    os.remove(palette_path)
-                except:
-                    pass
-                
-                if os.path.exists(output_path):
-                    return output_path
-                else:
-                    logging.warning("ffmpeg GIF conversion failed, returning original")
-                    return input_path
-            except Exception as e:
-                logging.warning(f"ffmpeg conversion failed: {e}, returning original")
-                return input_path
-        
+        # For video files, return original (would need ffmpeg for proper conversion)
         else:
             return input_path
 
@@ -4543,80 +4200,55 @@ async def convert_to_gif(input_path: str, text_overlay: str = None, image_overla
         return None
 
 
-async def create_sticker_pack_from_image(client, image_path: str, user_id: int) -> str:
-    """Create a proper Telegram sticker pack from image"""
+async def create_sticker_from_image(image_path: str, pack_name: str = "darkself") -> str:
+    """Create a sticker-compatible image from any image"""
     try:
-        from PIL import Image as PILImage
-        import uuid
-        
-        # Convert image to proper sticker format
-        output_path = image_path.rsplit('.', 1)[0] + '_sticker.webp'
-        
-        with PILImage.open(image_path) as img:
+        output_path = image_path.rsplit('.', 1)[0] + '_sticker.png'
+
+        with Image.open(image_path) as img:
             # Convert to RGBA if necessary
             if img.mode != 'RGBA':
                 img = img.convert('RGBA')
-            
-            # Resize to sticker size (512x512 is Telegram standard)
+
+            # Resize to sticker size (max 512x512)
             max_size = 512
             if img.width > max_size or img.height > max_size:
                 ratio = min(max_size / img.width, max_size / img.height)
                 new_size = (int(img.width * ratio), int(img.height * ratio))
-                img = img.resize(new_size, PILImage.Resampling.LANCZOS)
-            
-            # Save as WebP (required for stickers)
-            img.save(output_path, 'WebP', quality=95)
-        
-        if os.path.exists(output_path):
-            # Try to add to sticker pack using Pyrogram API
-            pack_name = f"darkself_{user_id}_{int(time.time())}"
-            
-            try:
-                # Send sticker to create/add to pack
-                result = await client.send_sticker(
-                    user_id,  # Send to self (saved messages)
-                    output_path,
-                    emoji="😊"
-                )
-                
-                if result:
-                    logging.info(f"✅ Sticker created successfully: {output_path}")
-                    return output_path
-                else:
-                    return output_path
-            except Exception as e:
-                logging.warning(f"Could not create sticker pack via API: {e}, but sticker file created")
-                return output_path
-        
-        return None
-    
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+            # Save as PNG (required for stickers)
+            img.save(output_path, 'PNG', optimize=True)
+
+        return output_path
+
     except Exception as e:
-        logging.error(f"Create sticker pack from image error: {e}")
+        logging.error(f"Create sticker from image error: {e}")
         return None
 
 
-async def create_sticker_pack_from_text(client, text: str, user_id: int) -> str:
-    """Create a proper sticker pack from text"""
+async def create_sticker_from_text(text: str, pack_name: str = "darkself") -> str:
+    """Create a sticker image from text"""
     try:
         # Create a new image with transparent background
         img_size = 512
         img = Image.new('RGBA', (img_size, img_size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        
-        # Try to use a good font
+
+        # Try to use a Persian font, fallback to default
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 50)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 40)
         except:
             try:
-                font = ImageFont.truetype("C:\\Windows\\Fonts\\arial.ttf", 50)
+                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 40)
             except:
                 font = ImageFont.load_default()
-        
+
         # Wrap text to fit image
         lines = []
         words = text.split()
         current_line = ""
-        
+
         for word in words:
             test_line = current_line + " " + word if current_line else word
             bbox = draw.textbbox((0, 0), test_line, font=font)
@@ -4626,663 +4258,38 @@ async def create_sticker_pack_from_text(client, text: str, user_id: int) -> str:
                 if current_line:
                     lines.append(current_line)
                 current_line = word
-        
+
         if current_line:
             lines.append(current_line)
-        
+
         # Calculate vertical position to center text
-        line_height = 60
+        line_height = 50
         total_height = len(lines) * line_height
-        start_y = max(10, (img_size - total_height) // 2)
-        
-        # Draw text with nice styling
+        start_y = (img_size - total_height) // 2
+
+        # Draw text
         for i, line in enumerate(lines):
             bbox = draw.textbbox((0, 0), line, font=font)
             text_width = bbox[2] - bbox[0]
             x = (img_size - text_width) // 2
             y = start_y + i * line_height
-            
-            # Draw with outline effect (shadow/border)
-            for dx in [-3, -2, -1, 0, 1, 2, 3]:
-                for dy in [-3, -2, -1, 0, 1, 2, 3]:
-                    if abs(dx) + abs(dy) > 0:
-                        draw.text((x + dx, y + dy), line, font=font, fill=(50, 50, 50, 255))
-            
-            # Draw main text
+
+            # Draw with outline effect
+            for dx in [-2, -1, 0, 1, 2]:
+                for dy in [-2, -1, 0, 1, 2]:
+                    if dx != 0 or dy != 0:
+                        draw.text((x + dx, y + dy), line, font=font, fill=(0, 0, 0, 255))
             draw.text((x, y), line, font=font, fill=(255, 255, 255, 255))
-        
-        # Save as WebP (sticker format)
-        output_path = f"/tmp/sticker_text_{user_id}_{int(time.time())}.webp"
-        img.save(output_path, 'WebP', quality=95)
-        
-        if os.path.exists(output_path):
-            logging.info(f"✅ Text sticker created: {output_path}")
-            return output_path
-        
-        return None
-    
+
+        # Save
+        output_path = f"/tmp/sticker_{int(time.time())}.png"
+        img.save(output_path, 'PNG')
+
+        return output_path
+
     except Exception as e:
         logging.error(f"Create sticker from text error: {e}")
         return None
-
-
-async def mute_handler(client, message):
-    """Handle mute command - سکوت کردن [تعداد دقیقه 1-1000]"""
-    user_id = client.me.id
-    
-    try:
-        # Parse command: سکوت کردن [duration]
-        match = re.match(r'^سکوت کردن\s+(\d+)?', message.text, re.IGNORECASE)
-        if not match:
-            await message.edit_text("⚠️ استفاده: `سکوت کردن [تعداد دقیقه 1-1000]`")
-            return
-        
-        duration = int(match.group(1)) if match.group(1) else 5
-        duration = max(1, min(1000, duration))  # Clamp between 1-1000
-        
-        if not message.reply_to_message:
-            await message.edit_text("⚠️ روی پیام کاربر ریپلای کنید")
-            return
-        
-        target_user = message.reply_to_message.from_user
-        if not target_user:
-            await message.edit_text("⚠️ نتوانستم کاربر را شناخت")
-            return
-        
-        # Store mute info
-        if user_id not in MUTED_USERS_MAP:
-            MUTED_USERS_MAP[user_id] = {}
-        if message.chat.id not in MUTED_USERS_MAP[user_id]:
-            MUTED_USERS_MAP[user_id][message.chat.id] = {}
-        
-        unmute_time = time.time() + (duration * 60)
-        MUTED_USERS_MAP[user_id][message.chat.id][target_user.id] = unmute_time
-        
-        # Save to database
-        if muted_users_collection is not None:
-            try:
-                muted_users_collection.update_one(
-                    {'user_id': user_id, 'chat_id': message.chat.id, 'muted_user_id': target_user.id},
-                    {'$set': {'unmute_time': unmute_time, 'duration_minutes': duration}},
-                    upsert=True
-                )
-            except Exception as db_err:
-                logging.warning(f"DB mute save failed: {db_err}")
-        
-        await message.edit_text(f"🔇 کاربر سکوت شد برای {duration} دقیقه")
-    
-    except Exception as e:
-        logging.error(f"Mute handler error: {e}")
-        await message.edit_text(f"⚠️ خطا: {str(e)[:80]}")
-
-
-async def unmute_handler(client, message):
-    """Handle unmute command"""
-    user_id = client.me.id
-    
-    try:
-        if not message.reply_to_message:
-            await message.edit_text("⚠️ روی پیام کاربر ریپلای کنید")
-            return
-        
-        target_user = message.reply_to_message.from_user
-        if not target_user:
-            await message.edit_text("⚠️ نتوانستم کاربر را شناخت")
-            return
-        
-        # Remove from mute list
-        if user_id in MUTED_USERS_MAP and message.chat.id in MUTED_USERS_MAP[user_id]:
-            MUTED_USERS_MAP[user_id][message.chat.id].pop(target_user.id, None)
-        
-        # Remove from database
-        if muted_users_collection is not None:
-            try:
-                muted_users_collection.delete_one({
-                    'user_id': user_id,
-                    'chat_id': message.chat.id,
-                    'muted_user_id': target_user.id
-                })
-            except Exception as db_err:
-                logging.warning(f"DB unmute delete failed: {db_err}")
-        
-        await message.edit_text(f"🔊 سکوت کاربر برداشته شد")
-    
-    except Exception as e:
-        logging.error(f"Unmute handler error: {e}")
-        await message.edit_text(f"⚠️ خطا: {str(e)[:80]}")
-
-
-async def price_converter_handler(client, message):
-    """دریافت قیمت ارزها - قیمت دلار / قیمت طلا / قیمت تتر"""
-    try:
-        command = message.text.strip().lower()
-        
-        # Handle price commands
-        if 'قیمت دلار' in command:
-            currency = 'usd'
-            currency_name = 'دلار'
-        elif 'قیمت طلا' in command:
-            currency = 'xau'
-            currency_name = 'طلا'
-        elif 'قیمت تتر' in command:
-            currency = 'usdt'
-            currency_name = 'تتر'
-        else:
-            # معلومات درباره دستورات
-            await message.reply(
-                "❌ دستور نامعلوم\n\n"
-                "**دستورات قیمت:**\n"
-                "`قیمت دلار` - نرخ دلار به تومان\n"
-                "`قیمت طلا` - قیمت طلا به تومان\n"
-                "`قیمت تتر` - نرخ تتر به تومان"
-            )
-            return
-        
-        status = await message.reply(f"⏳ درحال دریافت قیمت {currency_name}...")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                # دریافت قیمت از API
-                if currency in ['xau', 'usdt']:
-                    # برای طلا و تتر از CoinGecko
-                    url = f"https://api.coingecko.com/api/v3/simple/price?ids={'gold' if currency == 'xau' else 'tether'}&vs_currencies=usd"
-                    
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if currency == 'xau' and 'gold' in data:
-                                price_usd = data['gold'].get('usd')
-                            elif currency == 'usdt' and 'tether' in data:
-                                price_usd = data['tether'].get('usd')
-                            else:
-                                price_usd = None
-                            
-                            if price_usd:
-                                # تبدیل به تومان (نرخ تقریبی)
-                                price_irr = price_usd * 42000  # نرخ تقریبی دلار
-                                await status.edit_text(
-                                    f"💹 **قیمت {currency_name}**\n\n"
-                                    f"💵 1 {currency_name} = {price_usd:,.2f} USD\n"
-                                    f"🇮🇷 1 {currency_name} = {price_irr:,.0f} تومان"
-                                )
-                                return
-                
-                # برای دلار از ExchangeRate API
-                if currency == 'usd':
-                    url = "https://api.exchangerate-api.com/v4/latest/usd"
-                    
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if 'rates' in data:
-                                # دریافت نرخ ایران (اگر موجود باشد)
-                                price_irr = data['rates'].get('irr', None)
-                                if price_irr:
-                                    await status.edit_text(
-                                        f"💹 **قیمت دلار**\n\n"
-                                        f"💵 1 USD = {price_irr:,.0f} تومان"
-                                    )
-                                    return
-                
-                await status.edit_text(f"❌ نتوانستم قیمت {currency_name} را دریافت کنم")
-        
-        except asyncio.TimeoutError:
-            await status.edit_text("❌ زمان انتظار تمام شد")
-        except Exception as e:
-            logging.error(f"Price converter error: {e}")
-            await status.edit_text(f"❌ خطا: {str(e)[:50]}")
-    
-    except Exception as e:
-        logging.error(f"Price handler error: {e}")
-        await message.reply(f"❌ خطا: {str(e)[:50]}")
-
-
-async def welcome_message_handler(client, message):
-    """خوش‌آمد - فقط روشن/خاموش"""
-    user_id = client.me.id
-    command = message.text.lower()
-    chat_id = message.chat.id
-    
-    try:
-        # بررسی اینکه ربات ادمین یا اونر گروه است
-        try:
-            chat_member = await client.get_chat_member(chat_id, user_id)
-            is_admin = chat_member.status in ['administrator', 'creator']
-            if not is_admin:
-                await message.edit_text("⚠️ فقط ادمین یا اونر گروه می‌تواند خوش‌آمد را تنظیم کند")
-                return
-        except Exception as e:
-            logging.warning(f"Could not check admin status: {e}")
-            await message.edit_text("⚠️ نتوانستم وضعیت ادمین را بررسی کنم")
-            return
-        
-        # روشن کردن خوش‌آمد
-        if 'خوش‌آمد روشن' in command or 'خوش آمد روشن' in command or 'خوش‌آمد روشن' in command:
-            if user_id not in WELCOME_MESSAGE_CONFIG:
-                WELCOME_MESSAGE_CONFIG[user_id] = {}
-            
-            # متن ثابت - هر کاربر و هر گروه متفاوت
-            config = {
-                'enabled': True,
-                'text': 'WELCOME_MESSAGE_TEMPLATE'  # نشانه‌ای برای شناخت
-            }
-            
-            WELCOME_MESSAGE_CONFIG[user_id][chat_id] = config
-            
-            if welcome_messages_collection is not None:
-                try:
-                    welcome_messages_collection.update_one(
-                        {'user_id': user_id, 'chat_id': chat_id},
-                        {'$set': config},
-                        upsert=True
-                    )
-                except Exception as db_err:
-                    logging.warning(f"DB welcome save failed: {db_err}")
-            
-            await message.edit_text("✅ خوش‌آمد روشن شد")
-        
-        # خاموش کردن خوش‌آمد
-        elif 'خوش‌آمد خاموش' in command or 'خوش آمد خاموش' in command:
-            if user_id in WELCOME_MESSAGE_CONFIG and chat_id in WELCOME_MESSAGE_CONFIG[user_id]:
-                WELCOME_MESSAGE_CONFIG[user_id][chat_id]['enabled'] = False
-                
-                if welcome_messages_collection is not None:
-                    try:
-                        welcome_messages_collection.update_one(
-                            {'user_id': user_id, 'chat_id': chat_id},
-                            {'$set': {'enabled': False}}
-                        )
-                    except Exception as db_err:
-                        logging.warning(f"DB welcome toggle failed: {db_err}")
-                
-                await message.edit_text("✅ خوش‌آمد خاموش شد")
-            else:
-                await message.edit_text("⚠️ خوش‌آمد فعال نیست")
-        else:
-            await message.edit_text("❌ دستور نامعلوم\n\n**دستورات:**\n`خوش‌آمد روشن`\n`خوش‌آمد خاموش`")
-    
-    except Exception as e:
-        logging.error(f"Welcome message handler error: {e}")
-        await message.edit_text(f"⚠️ خطا: {str(e)[:80]}")
-
-
-async def new_member_welcome_handler(client, message):
-    """Handle new member welcome with dynamic names - متن ثابت"""
-    user_id = client.me.id
-    
-    try:
-        # Check if welcome is enabled
-        if user_id not in WELCOME_MESSAGE_CONFIG:
-            return
-        
-        config = WELCOME_MESSAGE_CONFIG[user_id].get(message.chat.id)
-        if not config or not config.get('enabled', False):
-            return
-        
-        # Get new members
-        if not message.new_chat_members:
-            return
-        
-        for new_member in message.new_chat_members:
-            try:
-                # ساخت متن خوش‌آمد با اسم فرد و گروه
-                chat_title = message.chat.title or "گروه"
-                member_name = new_member.first_name or "دوست"
-                
-                welcome_text = f"سلام {member_name}\nبه گروه {chat_title} خوش امدید 🌸"
-                
-                await client.send_message(
-                    message.chat.id,
-                    welcome_text,
-                    reply_to_message_id=message.id
-                )
-                
-                logging.info(f"✅ پیام خوش‌آمد برای {new_member.username or new_member.id} ارسال شد")
-            except Exception as e:
-                logging.error(f"Error sending welcome to {new_member.id}: {e}")
-    
-    except Exception as e:
-        logging.error(f"New member welcome handler error: {e}")
-
-
-async def bulk_delete_handler(client, message):
-    """حذف انبوهی - ترک تمام کانال‌ها، گروه‌ها، بلاک بات‌ها"""
-    user_id = message.from_user.id
-    command = message.text.lower().strip()
-    
-    try:
-        if 'ترک تمام کانال' in command:
-            status = await message.reply("⏳ درحال ترک تمام کانال‌ها...")
-            deleted_count = 0
-            failed_count = 0
-            
-            try:
-                async for dialog in client.get_dialogs():
-                    if dialog.chat:
-                        # کانال‌های broadcast (نه supergroup)
-                        is_channel = getattr(dialog.chat, 'is_channel', False)
-                        if is_channel or (dialog.chat.type == ChatType.SUPERGROUP and getattr(dialog.chat, 'is_channel', False)):
-                            try:
-                                await client.leave_chat(dialog.chat.id)
-                                deleted_count += 1
-                                logging.info(f"Left channel: {dialog.chat.title} ({dialog.chat.id})")
-                            except Exception as e:
-                                logging.warning(f"Could not leave channel {dialog.chat.id}: {e}")
-                                failed_count += 1
-                            
-                            await asyncio.sleep(0.2)
-            except Exception as e:
-                logging.error(f"Error getting dialogs: {e}")
-            
-            await status.edit_text(f"✅ {deleted_count} کانال ترک شد\n❌ {failed_count} ناموفق")
-        
-        elif 'ترک تمام گروه' in command:
-            status = await message.reply("⏳ درحال ترک تمام گروه‌ها...")
-            deleted_count = 0
-            failed_count = 0
-            
-            try:
-                async for dialog in client.get_dialogs():
-                    if dialog.chat:
-                        # گروه‌ها (supergroup اما نه channel)
-                        is_channel = getattr(dialog.chat, 'is_channel', False)
-                        if (dialog.chat.type == ChatType.SUPERGROUP and not is_channel) or dialog.chat.type == ChatType.GROUP:
-                            try:
-                                await client.leave_chat(dialog.chat.id)
-                                deleted_count += 1
-                                logging.info(f"Left group: {dialog.chat.title} ({dialog.chat.id})")
-                            except Exception as e:
-                                logging.warning(f"Could not leave group {dialog.chat.id}: {e}")
-                                failed_count += 1
-                        
-                        await asyncio.sleep(0.2)
-            except Exception as e:
-                logging.error(f"Error getting dialogs: {e}")
-            
-            await status.edit_text(f"✅ {deleted_count} گروه ترک شد\n❌ {failed_count} ناموفق")
-        
-        elif 'بلاک تمام بات' in command:
-            status = await message.reply("⏳ درحال بلاک کردن تمام بات‌ها...")
-            deleted_count = 0
-            failed_count = 0
-            blocked_bots = set()
-            
-            try:
-                async for dialog in client.get_dialogs():
-                    if dialog.chat and dialog.chat.type == ChatType.PRIVATE:
-                        try:
-                            user_id = dialog.chat.id
-                            # Skip if already processed
-                            if user_id in blocked_bots:
-                                continue
-                            
-                            # بررسی اینکه بات است یا نه
-                            user = await client.get_users(user_id)
-                            if user and user.is_bot:
-                                await client.block_user(user_id)
-                                deleted_count += 1
-                                blocked_bots.add(user_id)
-                                logging.info(f"Blocked bot: {user.first_name} ({user_id})")
-                        except Exception as e:
-                            failed_count += 1
-                            logging.warning(f"Could not block bot {dialog.chat.id}: {e}")
-                        
-                        await asyncio.sleep(0.1)
-            except Exception as e:
-                logging.error(f"Error getting dialogs: {e}")
-            
-            await status.edit_text(f"✅ {deleted_count} بات بلاک شد\n❌ {failed_count} ناموفق")
-        
-        else:
-            await message.reply("❌ دستور نامعلوم\n\n**دستورات:**\n`ترک تمام کانال ها`\n`ترک تمام گروه ها`\n`بلاک تمام بات ها`")
-    
-    except Exception as e:
-        logging.error(f"Bulk delete handler error: {e}")
-        await message.reply(f"❌ خطا: {str(e)[:50]}")
-
-
-async def create_channel_handler(client, message):
-    """ساخت کانال جدید - دستور: ساخت کانال اسم_کانال"""
-    user_id = message.from_user.id
-    command = message.text.strip()
-    
-    try:
-        # استخراج نام کانال
-        match = re.search(r'ساخت کانال\s+(.+?)$', command, re.IGNORECASE)
-        
-        if not match:
-            await message.reply("❌ **استفاده:** `ساخت کانال اسم_کانال`")
-            return
-        
-        channel_name = match.group(1).strip()
-        
-        if not channel_name or len(channel_name) < 3:
-            await message.reply("❌ نام کانال باید حداقل 3 کاراکتر باشد")
-            return
-        
-        status = await message.reply(f"⏳ درحال ایجاد کانال `{channel_name}`...")
-        
-        try:
-            # استفاده از Pyrogram raw API برای ایجاد کانال (broadcast channel)
-            result = await client.invoke(
-                functions.channels.CreateChannel(
-                    title=channel_name,
-                    about=f"کانال ایجاد‌شده توسط ربات"
-                )
-            )
-            
-            new_channel = result.chats[0] if result.chats else None
-            if not new_channel:
-                await status.edit_text(f"❌ خطا در ایجاد کانال")
-                return
-            
-            # ذخیره در دیتابیس
-            if feature_settings_collection is not None:
-                try:
-                    feature_settings_collection.update_one(
-                        {'user_id': user_id, 'type': 'channel_created'},
-                        {'$push': {'channels': {
-                            'name': channel_name,
-                            'id': new_channel.id,
-                            'created_at': datetime.now().isoformat()
-                        }}},
-                        upsert=True
-                    )
-                except Exception as db_err:
-                    logging.warning(f"DB save failed: {db_err}")
-            
-            await status.edit_text(
-                f"✅ **کانال ایجاد شد!**\n\n"
-                f"📝 **اسم:** `{channel_name}`\n"
-                f"📊 **آیدی:** `{new_channel.id}`"
-            )
-            
-            logging.info(f"Channel created: {channel_name} (ID: {new_channel.id})")
-            
-        except Exception as e:
-            await status.edit_text(f"❌ خطا در ایجاد کانال: {str(e)[:80]}")
-            logging.error(f"Create channel error: {e}")
-    
-    except Exception as e:
-        logging.error(f"Create channel handler error: {e}")
-        await message.reply(f"❌ خطا: {str(e)[:50]}")
-
-
-async def create_group_handler(client, message):
-    """ساخت گروه جدید - دستور: ساخت گروه اسم_گروه"""
-    user_id = message.from_user.id
-    command = message.text.strip()
-    
-    try:
-        # استخراج نام گروه
-        match = re.search(r'ساخت گروه\s+(.+?)$', command, re.IGNORECASE)
-        
-        if not match:
-            await message.reply("❌ **استفاده:** `ساخت گروه اسم_گروه`")
-            return
-        
-        group_name = match.group(1).strip()
-        
-        if not group_name or len(group_name) < 3:
-            await message.reply("❌ نام گروه باید حداقل 3 کاراکتر باشد")
-            return
-        
-        status = await message.reply(f"⏳ درحال ایجاد گروه `{group_name}`...")
-        
-        try:
-            # ایجاد گروه (supergroup)
-            new_group = await client.create_supergroup(
-                title=group_name,
-                description=f"گروه ایجاد‌شده توسط ربات"
-            )
-            
-            # ذخیره در دیتابیس
-            if feature_settings_collection is not None:
-                try:
-                    feature_settings_collection.update_one(
-                        {'user_id': user_id, 'type': 'group_created'},
-                        {'$push': {'groups': {
-                            'name': group_name,
-                            'id': new_group.id,
-                            'created_at': datetime.now().isoformat()
-                        }}},
-                        upsert=True
-                    )
-                except Exception as db_err:
-                    logging.warning(f"DB save failed: {db_err}")
-            
-            await status.edit_text(
-                f"✅ **گروه ایجاد شد!**\n\n"
-                f"📝 **اسم:** `{group_name}`\n"
-                f"📊 **آیدی:** `{new_group.id}`"
-            )
-            
-            logging.info(f"Group created: {group_name} (ID: {new_group.id})")
-            
-        except Exception as e:
-            await status.edit_text(f"❌ خطا در ایجاد گروه: {str(e)[:50]}")
-            logging.error(f"Create group error: {e}")
-    
-    except Exception as e:
-        logging.error(f"Create group handler error: {e}")
-        await message.reply(f"❌ خطا: {str(e)[:50]}")
-
-
-async def list_muted_handler(client, message):
-    """List all muted users in current group"""
-    user_id = client.me.id
-    
-    try:
-        chat_id = message.chat.id
-        
-        muted_list = MUTED_USERS_MAP.get(user_id, {}).get(chat_id, {})
-        
-        if not muted_list:
-            await message.edit_text("ℹ️ کاربر سکوتی در این گروه وجود ندارد")
-            return
-        
-        # Clean up expired mutes
-        current_time = time.time()
-        expired = [uid for uid, unmute_time in muted_list.items() if unmute_time < current_time]
-        for uid in expired:
-            muted_list.pop(uid, None)
-            if muted_users_collection:
-                muted_users_collection.delete_one({
-                    'user_id': user_id,
-                    'chat_id': chat_id,
-                    'muted_user_id': uid
-                })
-        
-        if not muted_list:
-            await message.edit_text("ℹ️ کاربر سکوتی در این گروه وجود ندارد")
-            return
-        
-        text = "**🔇 لیست کاربران سکوت شده:**\n"
-        for uid, unmute_time in muted_list.items():
-            remaining = unmute_time - current_time
-            remaining_min = int(remaining / 60)
-            text += f"- `{uid}` ({remaining_min} دقیقه باقی)\n"
-        
-        await message.edit_text(text)
-    
-    except Exception as e:
-        logging.error(f"List muted handler error: {e}")
-        await message.edit_text(f"⚠️ خطا: {e}")
-
-
-async def clear_muted_handler(client, message):
-    """Clear all mutes in current group"""
-    user_id = client.me.id
-    chat_id = message.chat.id
-    
-    try:
-        if user_id in MUTED_USERS_MAP and chat_id in MUTED_USERS_MAP[user_id]:
-            count = len(MUTED_USERS_MAP[user_id][chat_id])
-            MUTED_USERS_MAP[user_id][chat_id].clear()
-            
-            if muted_users_collection:
-                muted_users_collection.delete_many({
-                    'user_id': user_id,
-                    'chat_id': chat_id
-                })
-            
-            await message.edit_text(f"✅ {count} مورد سکوت پاک شد")
-        else:
-            await message.edit_text("ℹ️ کاربر سکوتی در این گروه وجود ندارد")
-    
-    except Exception as e:
-        logging.error(f"Clear muted handler error: {e}")
-        await message.edit_text(f"⚠️ خطا: {e}")
-
-
-async def set_channel_comment_handler(client, message):
-    """Setup channel-to-group comment forwarding"""
-    user_id = client.me.id
-    
-    try:
-        # Parse: /comment_setup [linked_group_id] [comment_text]
-        parts = message.text.split(maxsplit=2)
-        if len(parts) < 3:
-            await message.edit_text("⚠️ استفاده: `/comment_setup [group_id] [متن کامنت]`")
-            return
-        
-        try:
-            linked_group_id = int(parts[1])
-        except ValueError:
-            await message.edit_text("⚠️ شناسه گروه معتبر نیست")
-            return
-        
-        comment_text = parts[2] if len(parts) > 2 else COMMENT_TEXT.get(user_id, "اول! 🔥")
-        
-        if user_id not in CHANNEL_COMMENT_CONFIG:
-            CHANNEL_COMMENT_CONFIG[user_id] = {}
-        
-        CHANNEL_COMMENT_CONFIG[user_id][message.chat.id] = {
-            'enabled': True,
-            'linked_group': linked_group_id,
-            'comment_text': comment_text
-        }
-        
-        # Save to database
-        if channel_comments_collection is not None:
-            try:
-                channel_comments_collection.update_one(
-                    {'user_id': user_id, 'channel_id': message.chat.id},
-                    {'$set': {
-                        'enabled': True,
-                        'linked_group': linked_group_id,
-                        'comment_text': comment_text
-                    }},
-                    upsert=True
-                )
-            except Exception as db_err:
-                logging.warning(f"DB channel comment save failed: {db_err}")
-        
-        await message.edit_text("✅ کامنت خودکار کانال تنظیم شد")
-    
-    except Exception as e:
-        logging.error(f"Set channel comment error: {e}")
-        await message.edit_text(f"⚠️ خطا: {str(e)[:80]}")
 
 
 async def crash_management_controller(client, message):
@@ -5419,108 +4426,60 @@ async def channel_comment_handler(client, message):
     user_id = client.me.id
     
     # بررسی فعال بودن کامنت
-    if not CHANNEL_COMMENT_STATUS.get(user_id, False):
+    if not COMMENT_STATUS.get(user_id, False):
         return
     
     # فقط برای پیام‌های کانال
-    if message.chat.type != ChatType.SUPERGROUP and message.chat.type != ChatType.CHANNEL:
+    if message.chat.type != ChatType.CHANNEL:
         return
     
     # فقط برای پست‌های خودمان (outgoing)
     if not message.outgoing:
         return
     
+    # بررسی اینکه کانال discussion group دارد
     try:
-        # Get channel config
-        channel_config = CHANNEL_COMMENT_CONFIG.get(user_id, {}).get(message.chat.id)
-        if not channel_config or not channel_config.get('enabled', False):
+        chat = await client.get_chat(message.chat.id)
+        if not hasattr(chat, 'linked_chat') or not chat.linked_chat:
             return
         
-        linked_group_id = channel_config.get('linked_group')
-        comment_text = channel_config.get('comment_text', COMMENT_TEXT.get(user_id, "اول! 🔥"))
+        discussion_chat_id = chat.linked_chat.id
         
-        if not linked_group_id:
-            logging.warning(f"No linked group for channel {message.chat.id}")
-            return
+        # دریافت متن کامنت
+        comment_text = COMMENT_TEXT.get(user_id, "اول! 🔥")
         
         # کمی تاخیر برای اطمینان از اینکه پیام discussion group ایجاد شده است
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         
         # ارسال کامنت در discussion group
         try:
-            # Try to reply to the message in the discussion group
-            await client.send_message(
-                linked_group_id,
-                comment_text,
-                reply_to_message_id=message.id
-            )
-            logging.info(f"✅ کامنت در گروه {linked_group_id} ارسال شد: {comment_text}")
-        except Exception as e1:
-            # اگر reply_to_message_id کار نکرد، سعی می‌کنیم بدون reply ارسال کنیم
-            logging.warning(f"⚠️ ارسال با reply_to_message_id ناموفق بود: {e1}")
+            # در discussion group، باید پیامی پیدا کنیم که به پست کانال اشاره می‌کند
+            # یا می‌توانیم مستقیم reply_to_message_id را به message.id بدهیم
+            # Telegram به صورت خودکار آن را به پیام discussion group مربوط می‌کند
             try:
-                await client.send_message(linked_group_id, comment_text)
-                logging.info(f"✅ کامنت در گروه {linked_group_id} ارسال شد (بدون reply): {comment_text}")
-            except Exception as e2:
-                logging.error(f"❌ ارسال کامنت در گروه {linked_group_id} ناموفق: {e2}")
-    
+                await client.send_message(
+                    discussion_chat_id,
+                    comment_text,
+                    reply_to_message_id=message.id
+                )
+                logging.info(f"✅ کامنت در discussion group کانال {message.chat.id} ارسال شد: {comment_text}")
+            except Exception as e1:
+                # اگر reply_to_message_id کار نکرد، سعی می‌کنیم بدون reply ارسال کنیم
+                logging.warning(f"⚠️ ارسال با reply_to_message_id ناموفق بود، سعی بدون reply: {e1}")
+                await client.send_message(
+                    discussion_chat_id,
+                    comment_text
+                )
+                logging.info(f"✅ کامنت در discussion group کانال {message.chat.id} ارسال شد (بدون reply): {comment_text}")
+        except Exception as e:
+            logging.error(f"❌ خطا در ارسال کامنت در discussion group کانال {message.chat.id}: {e}")
     except Exception as e:
-        logging.error(f"❌ خطا در channel_comment_handler: {e}")
+        logging.error(f"❌ خطا در بررسی discussion group کانال {message.chat.id}: {e}")
 
 async def comment_handler(client, message):
-    """کامنت اتوماتیک برای پیام‌های forwarded شده در discussion groups"""
-    user_id = message.from_user.id
-    
-    # بررسی فعال بودن کامنت
-    if not COMMENT_STATUS.get(user_id, False):
-        return
-    
-    # فقط برای پیام‌های outgoing (فرستاده شده توسط ما)
-    if not message.outgoing:
-        return
-    
-    try:
-        # بررسی اینکه در یک supergroup (discussion group) هستیم
-        if message.chat.type != ChatType.SUPERGROUP:
-            return
-        
-        # بررسی اینکه پیام یک reply_to دارد (یعنی در یک discussion group است)
-        if not message.reply_to_message:
-            return
-        
-        # متن کامنت
-        comment_text = COMMENT_TEXT.get(user_id, "اول! 🔥")
-        
-        # چک کنیم کی آخرین کامنت ارسال شده
-        # برای جلوگیری از spam، حداکثر یک کامنت برای هر پیام
-        message_key = f"{user_id}_{message.chat.id}_{message.reply_to_message.id}"
-        
-        # اگر قبلاً برای این پیام کامنت فرستاده‌ایم، دوباره نفرستیم
-        if not hasattr(comment_handler, 'last_commented'):
-            comment_handler.last_commented = {}
-        
-        if message_key in comment_handler.last_commented:
-            # اگر کمتر از 5 ثانیه پیش کامنت فرستاده‌ایم، دوباره نفرستیم
-            if time.time() - comment_handler.last_commented[message_key] < 5:
-                return
-        
-        # ارسال کامنت (reply به پیام forwarded)
-        try:
-            reply_msg = await client.send_message(
-                message.chat.id,
-                comment_text,
-                reply_to_message_id=message.reply_to_message.id
-            )
-            
-            # ثبت زمان ارسال
-            comment_handler.last_commented[message_key] = time.time()
-            
-            logging.info(f"✅ کامنت ارسال شد: {comment_text}")
-        except Exception as e:
-            logging.error(f"❌ خطا در ارسال کامنت: {e}")
-            
-    except Exception as e:
-        logging.error(f"❌ خطا در comment_handler: {e}")
+    """Handle comment on forwarded messages (منطق کامنت از 1.py) - غیرفعال شده، استفاده از channel_comment_handler"""
+    # این handler غیرفعال شده است - از channel_comment_handler استفاده می‌شود
+    return
 
 async def bio_clock_controller(client, message):
     """Toggle bio clock on/off"""
@@ -5784,64 +4743,6 @@ async def toggle_controller(client, message):
             FRIEND_ACTIVE[user_id] = False
             await save_settings_to_db(user_id)
             await message.edit_text("❌ حالت دوست غیرفعال شد")
-
-        # ========== NEW FEATURE TOGGLES ==========
-        elif command == "قیمت روشن":
-            PRICE_CONVERSION_ENABLED[user_id] = True
-            if feature_settings_collection is not None:
-                feature_settings_collection.update_one(
-                    {'user_id': user_id},
-                    {'$set': {'price_enabled': True}},
-                    upsert=True
-                )
-            await message.edit_text("✅ تبدیل ارز فعال شد")
-        elif command == "قیمت خاموش":
-            PRICE_CONVERSION_ENABLED[user_id] = False
-            if feature_settings_collection is not None:
-                feature_settings_collection.update_one(
-                    {'user_id': user_id},
-                    {'$set': {'price_enabled': False}},
-                    upsert=True
-                )
-            await message.edit_text("❌ تبدیل ارز غیرفعال شد")
-        
-        elif command == "خوش‌آمد روشن":
-            CHANNEL_COMMENT_STATUS[user_id] = True
-            if feature_settings_collection is not None:
-                feature_settings_collection.update_one(
-                    {'user_id': user_id},
-                    {'$set': {'welcome_enabled': True}},
-                    upsert=True
-                )
-            await message.edit_text("✅ خوش‌آمدگویی فعال شد")
-        elif command == "خوش‌آمد خاموش":
-            CHANNEL_COMMENT_STATUS[user_id] = False
-            if feature_settings_collection is not None:
-                feature_settings_collection.update_one(
-                    {'user_id': user_id},
-                    {'$set': {'welcome_enabled': False}},
-                    upsert=True
-                )
-            await message.edit_text("❌ خوش‌آمدگویی غیرفعال شد")
-        
-        elif command == "کامنت کانال روشن":
-            CHANNEL_COMMENT_STATUS[user_id] = True
-            if feature_settings_collection is not None:
-                feature_settings_collection.update_one(
-                    {'user_id': user_id},
-                    {'$set': {'channel_comment_enabled': True}},
-                    upsert=True
-                )
-            await message.edit_text("✅ کامنت کانال فعال شد")
-        elif command == "کامنت کانال خاموش":
-            CHANNEL_COMMENT_STATUS[user_id] = False
-            if feature_settings_collection is not None:
-                feature_settings_collection.update_one(
-                    {'user_id': user_id},
-                    {'$set': {'channel_comment_enabled': False}},
-                    upsert=True
-                )
-            await message.edit_text("❌ کامنت کانال غیرفعال شد")
 
         # ========== LEARNING DATABASE COMMANDS ==========
         elif command == "وضعیت یادگیری":

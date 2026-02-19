@@ -4522,8 +4522,8 @@ async def delete_crash_reply_controller(client, message):
         replies = CRASH_REPLIES.get(user_id)
 
         if replies is None or not replies:
-             await message.edit_text("ℹ️ لیست متن کراش خالی است، چیزی برای حذف وجود ندارد.")
-             return
+            await message.edit_text("ℹ️ لیست متن کراش خالی است، چیزی برای حذف وجود ندارد.")
+            return
 
         try:
             if index_str:
@@ -4536,11 +4536,11 @@ async def delete_crash_reply_controller(client, message):
                     CRASH_REPLIES[user_id] = []
                     await save_settings_to_db(user_id)
                     await message.edit_text("✅ تمام متن‌های پاسخ کراش حذف شدند.")
-            except ValueError:
-                 await message.edit_text("⚠️ شماره وارد شده نامعتبر است.")
-            except Exception as e:
-                logging.error(f"Delete Crash Reply: Error for user {user_id}: {e}", exc_info=True)
-                await message.edit_text("⚠️ خطایی در حذف متن کراش رخ داد.")
+        except ValueError:
+            await message.edit_text("⚠️ شماره وارد شده نامعتبر است.")
+        except Exception as e:
+            logging.error(f"Delete Crash Reply: Error for user {user_id}: {e}", exc_info=True)
+            await message.edit_text("⚠️ خطایی در حذف متن کراش رخ داد.")
 
 # ========== NEW CONTROLLER FUNCTIONS ==========
 

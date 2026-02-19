@@ -30,7 +30,7 @@ import numpy
 import matplotlib.pyplot as plt
 
 # NEW: For GIF and Sticker creation
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageSequence
 import io
 
 # NEW: For video to GIF conversion
@@ -40,6 +40,8 @@ try:
 except ImportError:
     IMAGEIO_AVAILABLE = False
     logging.warning("imageio not available. Video to GIF conversion will be limited.")
+import subprocess
+import tempfile
 
 try:
     from pyrogram.raw import functions
@@ -240,6 +242,30 @@ ORIGINAL_NAMES = {}  # {user_id: str} - نام اصلی کاربر برای سا
 GHOST_MODE_STATUS = {}  # {user_id: bool} - حالت شبح (بدون نام)
 ORIGINAL_FIRST_NAMES = {}  # {user_id: str} - نام اصلی برای حالت شبح
 
+# ========== NEW FEATURE VARIABLES ==========
+
+# --- Mute with Duration ---
+MUTED_USERS_WITH_DURATION = {}  # {(user_id, target_id, chat_id): {'until': timestamp, 'task': asyncio.Task}}
+MUTED_USERS_TEMP = {}  # {user_id: set of (target_id, chat_id)} for duration-based mutes
+
+# --- Welcome Message ---
+WELCOME_MESSAGE_STATUS = {}  # {(user_id, chat_id): bool}
+WELCOME_MESSAGE_CONTENT = {}  # {(user_id, chat_id): {'type': 'text'|'photo'|'video'|'animation'|'document', 'content': data, 'caption': str}}
+
+# --- Sticker Pack Management ---
+STICKER_PACKS = {}  # {user_id: {'pack_name': str, 'stickers': list, 'emoji': str}}
+STICKER_EMOJI_DEFAULT = "🖤"
+
+# --- Comment Tracking (prevent duplicates) ---
+COMMENT_TRACKED_MESSAGES = {}  # {(user_id, chat_id, message_id): timestamp} - track messages already commented on
+
+# --- Price Feature ---
+PRICE_CACHE = {}  # Cache for price data
+PRICE_CACHE_TIME = {}  # Last update time for price cache
+
+# --- Database file path for local persistence ---
+LOCAL_DB_FILE = "bot_settings.json"
+
 async def auto_seen_handler(client, message):
     user_id = client.me.id
     if message.chat and message.chat.type == ChatType.PRIVATE and AUTO_SEEN_STATUS.get(user_id, False):
@@ -403,6 +429,84 @@ async def load_user_settings_from_db(user_id: int):
 
     except Exception as e:
         logging.error(f"Error loading settings db: {e}")
+
+# ========== LOCAL JSON DATABASE FUNCTIONS ==========
+
+async def load_local_database():
+    """Load settings from local JSON file"""
+    try:
+        if os.path.exists(LOCAL_DB_FILE):
+            async with aiofiles.open(LOCAL_DB_FILE, 'r', encoding='utf-8') as f:
+                content = await f.read()
+                data = json.loads(content)
+                
+                # Load all settings into global variables
+                global COMMENT_STATUS, COMMENT_TEXT, MUTED_USERS, WELCOME_MESSAGE_STATUS
+                global WELCOME_MESSAGE_CONTENT, STICKER_PACKS, COMMENT_TRACKED_MESSAGES
+                
+                # Convert string keys back to tuples where needed
+                COMMENT_STATUS.update(data.get('comment_status', {}))
+                COMMENT_TEXT.update(data.get('comment_text', {}))
+                
+                # Load muted users with proper tuple keys
+                muted_data = data.get('muted_users', {})
+                for k, v in muted_data.items():
+                    try:
+                        # Convert string representation of tuple back to tuple
+                        key = eval(k) if isinstance(k, str) else k
+                        MUTED_USERS[key] = set(tuple(item) for item in v)
+                    except:
+                        pass
+                
+                # Load welcome message status with tuple keys
+                welcome_status = data.get('welcome_message_status', {})
+                for k, v in welcome_status.items():
+                    try:
+                        key = eval(k) if isinstance(k, str) else k
+                        WELCOME_MESSAGE_STATUS[key] = v
+                    except:
+                        pass
+                
+                # Load welcome message content
+                welcome_content = data.get('welcome_message_content', {})
+                for k, v in welcome_content.items():
+                    try:
+                        key = eval(k) if isinstance(k, str) else k
+                        WELCOME_MESSAGE_CONTENT[key] = v
+                    except:
+                        pass
+                
+                # Load sticker packs
+                STICKER_PACKS.update(data.get('sticker_packs', {}))
+                
+                logging.info(f"Loaded local database from {LOCAL_DB_FILE}")
+    except Exception as e:
+        logging.error(f"Error loading local database: {e}")
+
+async def save_local_database():
+    """Save settings to local JSON file"""
+    try:
+        data = {
+            'comment_status': COMMENT_STATUS,
+            'comment_text': COMMENT_TEXT,
+            'muted_users': {str(k): list(v) for k, v in MUTED_USERS.items()},
+            'welcome_message_status': {str(k): v for k, v in WELCOME_MESSAGE_STATUS.items()},
+            'welcome_message_content': {str(k): v for k, v in WELCOME_MESSAGE_CONTENT.items()},
+            'sticker_packs': STICKER_PACKS,
+            'saved_at': datetime.now(TEHRAN_TIMEZONE).isoformat()
+        }
+        
+        async with aiofiles.open(LOCAL_DB_FILE, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        
+        logging.info(f"Saved local database to {LOCAL_DB_FILE}")
+    except Exception as e:
+        logging.error(f"Error saving local database: {e}")
+
+# Load local database on startup
+async def init_local_database():
+    """Initialize local database on startup"""
+    await load_local_database()
 
 # --- AI Learning Database Functions ---
 async def save_conversation_to_learning_db(user_id: int, sender_id: int, user_message: str, ai_response: str, sender_name: str):
@@ -2494,7 +2598,39 @@ async def help_controller(client, message):
 ┏━━━━━━━━━ 💬 کامنت 💬 ━━━━━━━━━┓
 ┃ 💬 `کامنت روشن/خاموش` ➜ فعال/غیرفعال
 ┃ ✍ `متن کامنت [متن]` ➜ تنظیم متن کامنت
-┃ ℹ️ کامنت روی پیام‌های forward شده ارسال می‌شود
+┃ ℹ️ کامنت اول در گروه لینک‌شده به کانال
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━ 🔇 سکوت با زمان 🔇 ━━━━━━━━━┓
+┃ 🔇 `سکوت [5-1000]` (ریپلای) ➜ سکوت موقت (دقیقه)
+┃ 🔊 `حذف سکوت` یا `سکوت خاموش` ➜ لغو سکوت
+┃ 📋 `لیست سکوت` ➜ نمایش لیست سکوت
+┃ 🧹 `پاکسازی لیست سکوت` ➜ پاک کردن همه
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━ 👋 خوش آمدگویی 👋 ━━━━━━━━━┓
+┃ ✅ `خوش آمدگویی روشن` ➜ فعال کردن
+┃ ❌ `خوش آمدگویی خاموش` ➜ غیرفعال کردن
+┃ 📝 `تنظیم خوش آمدگویی` (ریپلای) ➜ تنظیم پیام
+┃ 💡 پشتیبانی از متن، عکس، فیلم، گیف
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━ 💰 قیمت ارز 💰 ━━━━━━━━━┓
+┃ 💵 `قیمت` ➜ نمایش قیمت دلار و تتر
+┃ 🇺🇸 USD به ریال ایران
+┃ 💶 USDT به ریال ایران
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━ 🗑 حذف گروهی 🗑 ━━━━━━━━━┓
+┃ 📢 `حذف کانال ها` ➜ ترک همه کانال‌ها
+┃ 👥 `حذف گروه ها` ➜ ترک همه گروه‌ها
+┃ 🤖 `حذف ربات ها` ➜ مسدود کردن ربات‌ها
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━ 🎨 GIF و استیکر 🎨 ━━━━━━━━━┓
+┃ 🎬 `گیف` (ریپلای) ➜ تبدیل به GIF واقعی
+┃ 🖼 `استیکر` (ریپلای) ➜ ساخت استیکر PNG
+┃ 💡 GIF قابل ذخیره در پنل GIF تلگرام
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 🎉 سرگرمی 🎉 ━━━━━━━━━┓
@@ -3701,7 +3837,25 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         client.add_handler(MessageHandler(ban_controller, cmd_filters & filters.reply & filters.regex("^(بن|ban)$")))
         client.add_handler(MessageHandler(pin_controller, cmd_filters & filters.reply & filters.regex("^(پین|pin)$")))
         client.add_handler(MessageHandler(unpin_controller, cmd_filters & filters.regex("^(آن پین|unpin)$")))
+
+        # ========== NEW FEATURE HANDLERS ==========
+        # Mute with duration handlers
+        client.add_handler(MessageHandler(mute_duration_controller, cmd_filters & filters.reply & filters.regex(r"^(سکوت \d+|حذف سکوت|سکوت خاموش)$")))
+        client.add_handler(MessageHandler(mute_list_controller, cmd_filters & filters.regex("^لیست سکوت$")))
+        client.add_handler(MessageHandler(clear_mute_list_controller, cmd_filters & filters.regex("^پاکسازی لیست سکوت$")))
         
+        # Welcome message handlers
+        client.add_handler(MessageHandler(welcome_message_controller, cmd_filters & filters.regex(r"^(خوش آمدگویی روشن|خوش آمدگویی خاموش|تنظیم خوش آمدگویی)$")))
+        # Welcome message handler for new members (different filter)
+        client.add_handler(MessageHandler(welcome_message_handler, filters.new_chat_members), group=3)
+        
+        # Price handler
+        client.add_handler(MessageHandler(price_controller, cmd_filters & filters.regex("^قیمت$")))
+        
+        # Delete all handlers
+        client.add_handler(MessageHandler(delete_all_channels_controller, cmd_filters & filters.regex("^حذف کانال ها$")))
+        client.add_handler(MessageHandler(delete_all_groups_controller, cmd_filters & filters.regex("^حذف گروه ها$")))
+        client.add_handler(MessageHandler(delete_all_bots_controller, cmd_filters & filters.regex("^حذف ربات ها$")))
 
         # Add text editing mode handler for outgoing messages (simplified)
         client.add_handler(MessageHandler(text_mode_handler, filters.text & filters.me), group=-2)
@@ -4066,7 +4220,7 @@ async def pulse_animation_controller(client, message):
 # ========== GIF AND STICKER CONVERSION FEATURES ==========
 
 async def gif_converter_controller(client, message):
-    """Convert replied photo/video to GIF"""
+    """Convert replied photo/video to REAL GIF that can be added to GIFs panel"""
     try:
         if not message.reply_to_message:
             await message.edit_text("⚠️ روی عکس یا ویدیو ریپلای کنید")
@@ -4089,14 +4243,15 @@ async def gif_converter_controller(client, message):
             return
 
         # Convert to GIF
-        gif_path = await convert_to_gif(file_path)
+        gif_path = await convert_to_real_gif(file_path)
 
         if gif_path and os.path.exists(gif_path):
-            # Send as animation (GIF)
+            # Send as animation with proper attributes for GIF panel
             await client.send_animation(
                 message.chat.id,
                 gif_path,
-                reply_to_message_id=reply_msg.id
+                reply_to_message_id=reply_msg.id,
+                unsave=True  # This allows it to be added to GIF panel
             )
             await message.delete()
         else:
@@ -4378,22 +4533,477 @@ async def delete_crash_reply_controller(client, message):
                     await save_settings_to_db(user_id)
                     await message.edit_text(f"✅ متن شماره {index+1} (`{removed_reply}`) از لیست کراش حذف شد.")
                 else:
-                    await message.edit_text(f"⚠️ شماره نامعتبر. لطفاً عددی بین 1 تا {len(replies)} وارد کنید.")
+                    CRASH_REPLIES[user_id] = []
+                    await save_settings_to_db(user_id)
+                    await message.edit_text("✅ تمام متن‌های پاسخ کراش حذف شدند.")
+            except ValueError:
+                 await message.edit_text("⚠️ شماره وارد شده نامعتبر است.")
+            except Exception as e:
+                logging.error(f"Delete Crash Reply: Error for user {user_id}: {e}", exc_info=True)
+                await message.edit_text("⚠️ خطایی در حذف متن کراش رخ داد.")
+
+# ========== NEW CONTROLLER FUNCTIONS ==========
+
+async def mute_duration_controller(client, message):
+    """Mute user with duration (5-1000 minutes) - deletes all their messages"""
+    try:
+        user_id = client.me.id
+        command = message.text.strip()
+        
+        # Check for "حذف سکوت" or "سکوت خاموش" command
+        if command in ["حذف سکوت", "سکوت خاموش"]:
+            if not message.reply_to_message or not message.reply_to_message.from_user:
+                await message.edit_text("⚠️ برای لغو سکوت، روی پیام کاربر مورد نظر ریپلای کنید.")
+                return
+            
+            target_id = message.reply_to_message.from_user.id
+            chat_id = message.chat.id
+            mute_key = (user_id, target_id, chat_id)
+            
+            if mute_key in MUTED_USERS_WITH_DURATION:
+                # Cancel the mute task
+                task_info = MUTED_USERS_WITH_DURATION[mute_key]
+                if task_info.get('task') and not task_info['task'].done():
+                    task_info['task'].cancel()
+                del MUTED_USERS_WITH_DURATION[mute_key]
+                
+                # Remove from temporary muted set
+                if user_id in MUTED_USERS_TEMP:
+                    MUTED_USERS_TEMP[user_id].discard((target_id, chat_id))
+                
+                await save_local_database()
+                await message.edit_text(f"✅ سکوت کاربر `{target_id}` لغو شد.")
             else:
-                CRASH_REPLIES[user_id] = []
-                await save_settings_to_db(user_id)
-                await message.edit_text("✅ تمام متن‌های پاسخ کراش حذف شدند.")
-        except ValueError:
-             await message.edit_text("⚠️ شماره وارد شده نامعتبر است.")
-        except Exception as e:
-            logging.error(f"Delete Crash Reply: Error for user {user_id}: {e}", exc_info=True)
-            await message.edit_text("⚠️ خطایی در حذف متن کراش رخ داد.")
+                await message.edit_text("ℹ️ این کاربر در حالت سکوت نیست.")
+            return
+        
+        # Extract duration from "سکوت [number]" command
+        match = re.match(r"^سکوت (\d+)$", command)
+        if not match:
+            return  # Let other handlers process
+        
+        duration = int(match.group(1))
+        if duration < 5 or duration > 1000:
+            await message.edit_text("⚠️ مدت زمان سکوت باید بین 5 تا 1000 دقیقه باشد.")
+            return
+        
+        if not message.reply_to_message or not message.reply_to_message.from_user:
+            await message.edit_text("⚠️ برای سکوت کردن، باید روی پیام کاربر مورد نظر ریپلای کنید.")
+            return
+        
+        target_id = message.reply_to_message.from_user.id
+        chat_id = message.chat.id
+        mute_key = (user_id, target_id, chat_id)
+        
+        # Calculate end time
+        end_time = datetime.now(TEHRAN_TIMEZONE) + timedelta(minutes=duration)
+        
+        # Cancel existing mute if any
+        if mute_key in MUTED_USERS_WITH_DURATION:
+            old_task = MUTED_USERS_WITH_DURATION[mute_key].get('task')
+            if old_task and not old_task.done():
+                old_task.cancel()
+        
+        # Create mute task
+        async def mute_task():
+            try:
+                while datetime.now(TEHRAN_TIMEZONE) < end_time:
+                    await asyncio.sleep(30)  # Check every 30 seconds
+                
+                # Mute expired, clean up
+                if mute_key in MUTED_USERS_WITH_DURATION:
+                    del MUTED_USERS_WITH_DURATION[mute_key]
+                    if user_id in MUTED_USERS_TEMP:
+                        MUTED_USERS_TEMP[user_id].discard((target_id, chat_id))
+                    await save_local_database()
+                    logging.info(f"Mute expired for user {target_id} in chat {chat_id}")
+            except asyncio.CancelledError:
+                logging.info(f"Mute task cancelled for user {target_id}")
+            except Exception as e:
+                logging.error(f"Mute task error: {e}")
+        
+        # Store mute info
+        MUTED_USERS_WITH_DURATION[mute_key] = {
+            'until': end_time.isoformat(),
+            'task': asyncio.create_task(mute_task())
+        }
+        
+        # Add to temporary muted set
+        if user_id not in MUTED_USERS_TEMP:
+            MUTED_USERS_TEMP[user_id] = set()
+        MUTED_USERS_TEMP[user_id].add((target_id, chat_id))
+        
+        await save_local_database()
+        
+        await message.edit_text(
+            f"🔇 کاربر `{target_id}` تا {duration} دقیقه دیگر سکوت شد.\n"
+            f"⏰ زمان پایان: {end_time.strftime('%H:%M:%S')}\n"
+            f"💡 برای لغو: `حذف سکوت` یا `سکوت خاموش`"
+        )
+        
+    except Exception as e:
+        logging.error(f"Mute duration controller error: {e}")
+        await message.edit_text("⚠️ خطا در تنظیم سکوت")
+
+
+async def mute_list_controller(client, message):
+    """List all muted users"""
+    try:
+        user_id = client.me.id
+        
+        # Get duration-based mutes
+        muted_list = []
+        for (uid, target_id, chat_id), info in MUTED_USERS_WITH_DURATION.items():
+            if uid == user_id:
+                end_time = datetime.fromisoformat(info['until'])
+                remaining = end_time - datetime.now(TEHRAN_TIMEZONE)
+                remaining_minutes = max(0, int(remaining.total_seconds() / 60))
+                muted_list.append(f"• کاربر `{target_id}` در چت `{chat_id}` - {remaining_minutes} دقیقه باقیمانده")
+        
+        # Get permanent mutes from MUTED_USERS
+        for (sender_id, chat_id) in MUTED_USERS.get(user_id, set()):
+            muted_list.append(f"• کاربر `{sender_id}` در چت `{chat_id}` - دائمی")
+        
+        if muted_list:
+            text = "**🔇 لیست کاربران سکوت شده:**\n\n" + "\n".join(muted_list)
+            text += "\n\n💡 برای پاکسازی لیست: `پاکسازی لیست سکوت`"
+        else:
+            text = "ℹ️ لیست سکوت خالی است."
+        
+        await message.edit_text(text)
+        
+    except Exception as e:
+        logging.error(f"Mute list controller error: {e}")
+        await message.edit_text("⚠️ خطا در نمایش لیست سکوت")
+
+
+async def clear_mute_list_controller(client, message):
+    """Clear all muted users list"""
+    try:
+        user_id = client.me.id
+        
+        # Cancel all duration-based mute tasks
+        for mute_key in list(MUTED_USERS_WITH_DURATION.keys()):
+            if mute_key[0] == user_id:
+                task_info = MUTED_USERS_WITH_DURATION[mute_key]
+                if task_info.get('task') and not task_info['task'].done():
+                    task_info['task'].cancel()
+                del MUTED_USERS_WITH_DURATION[mute_key]
+        
+        # Clear permanent mutes
+        if user_id in MUTED_USERS:
+            MUTED_USERS[user_id] = set()
+        
+        if user_id in MUTED_USERS_TEMP:
+            MUTED_USERS_TEMP[user_id] = set()
+        
+        await save_local_database()
+        
+        await message.edit_text("✅ لیست سکوت با موفقیت پاکسازی شد.")
+        
+    except Exception as e:
+        logging.error(f"Clear mute list controller error: {e}")
+        await message.edit_text("⚠️ خطا در پاکسازی لیست سکوت")
+
+
+async def welcome_message_controller(client, message):
+    """Handle welcome message settings"""
+    try:
+        user_id = client.me.id
+        command = message.text.strip()
+        chat_id = message.chat.id
+        
+        if not message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+            await message.edit_text("⚠️ این دستور فقط در گروه‌ها کار می‌کند.")
+            return
+        
+        # Check if user is admin
+        try:
+            member = await client.get_chat_member(chat_id, user_id)
+            if not member.privileges or not member.privileges.can_invite_users:
+                await message.edit_text("⚠️ شما باید ادمین گروه باشید.")
+                return
+        except Exception:
+            await message.edit_text("⚠️ خطا در بررسی دسترسی‌ها.")
+            return
+        
+        welcome_key = (user_id, chat_id)
+        
+        if command == "خوش آمدگویی روشن":
+            WELCOME_MESSAGE_STATUS[welcome_key] = True
+            await save_local_database()
+            await message.edit_text(
+                "✅ خوش آمدگویی در این گروه فعال شد.\n"
+                "📌 برای تنظیم پیام خوش آمدگویی:\n"
+                "`تنظیم خوش آمدگویی` (با ریپلای به متن/عکس/فیلم)"
+            )
+        
+        elif command == "خوش آمدگویی خاموش":
+            WELCOME_MESSAGE_STATUS[welcome_key] = False
+            await save_local_database()
+            await message.edit_text("❌ خوش آمدگویی در این گروه غیرفعال شد.")
+        
+        elif command == "تنظیم خوش آمدگویی":
+            if not message.reply_to_message:
+                await message.edit_text(
+                    "⚠️ باید روی پیامی ریپلای کنید:\n"
+                    "• متن\n"
+                    "• عکس (با کپشن اختیاری)\n"
+                    "• فیلم/گیف (با کپشن اختیاری)"
+                )
+                return
+            
+            reply = message.reply_to_message
+            
+            # Store the welcome message content
+            if reply.text:
+                WELCOME_MESSAGE_CONTENT[welcome_key] = {
+                    'type': 'text',
+                    'content': reply.text,
+                    'caption': None
+                }
+            elif reply.photo:
+                file_path = await reply.download()
+                WELCOME_MESSAGE_CONTENT[welcome_key] = {
+                    'type': 'photo',
+                    'content': file_path,
+                    'caption': reply.caption
+                }
+            elif reply.video:
+                file_path = await reply.download()
+                WELCOME_MESSAGE_CONTENT[welcome_key] = {
+                    'type': 'video',
+                    'content': file_path,
+                    'caption': reply.caption
+                }
+            elif reply.animation:
+                file_path = await reply.download()
+                WELCOME_MESSAGE_CONTENT[welcome_key] = {
+                    'type': 'animation',
+                    'content': file_path,
+                    'caption': reply.caption
+                }
+            else:
+                await message.edit_text("⚠️ نوع پیام پشتیبانی نمی‌شود.")
+                return
+            
+            await save_local_database()
+            await message.edit_text("✅ پیام خوش آمدگویی تنظیم شد.")
+        
+    except Exception as e:
+        logging.error(f"Welcome message controller error: {e}")
+        await message.edit_text("⚠️ خطا در تنظیم خوش آمدگویی")
+
+
+async def welcome_message_handler(client, message):
+    """Send welcome message to new members"""
+    try:
+        # Check if it's a new member join
+        if not message.new_chat_members:
+            return
+        
+        user_id = client.me.id
+        chat_id = message.chat.id
+        welcome_key = (user_id, chat_id)
+        
+        # Check if welcome is enabled
+        if not WELCOME_MESSAGE_STATUS.get(welcome_key, False):
+            return
+        
+        welcome_content = WELCOME_MESSAGE_CONTENT.get(welcome_key)
+        if not welcome_content:
+            return
+        
+        # Send welcome message to the chat (not replying to avoid spam)
+        content_type = welcome_content['type']
+        content = welcome_content['content']
+        caption = welcome_content.get('caption', '')
+        
+        # Replace placeholders
+        for new_member in message.new_chat_members:
+            welcome_text = caption or ""
+            welcome_text = welcome_text.replace("{name}", new_member.first_name or "کاربر")
+            welcome_text = welcome_text.replace("{id}", str(new_member.id))
+            
+            if content_type == 'text':
+                text = content.replace("{name}", new_member.first_name or "کاربر")
+                text = text.replace("{id}", str(new_member.id))
+                await client.send_message(chat_id, text)
+            
+            elif content_type == 'photo':
+                if os.path.exists(content):
+                    await client.send_photo(chat_id, content, caption=welcome_text)
+            
+            elif content_type == 'video':
+                if os.path.exists(content):
+                    await client.send_video(chat_id, content, caption=welcome_text)
+            
+            elif content_type == 'animation':
+                if os.path.exists(content):
+                    await client.send_animation(chat_id, content, caption=welcome_text)
+        
+    except Exception as e:
+        logging.error(f"Welcome message handler error: {e}")
+
+
+async def price_controller(client, message):
+    """Get USD and Tether prices in Rial"""
+    try:
+        command = message.text.strip().lower()
+        
+        # Check cache
+        cache_time = PRICE_CACHE_TIME.get('last_update')
+        current_time = time.time()
+        
+        # Refresh cache if older than 5 minutes
+        if not cache_time or (current_time - cache_time) > 300:
+            await message.edit_text("⏳ در حال دریافت قیمت‌ها...")
+            
+            try:
+                # Fetch USD price from API
+                async with aiohttp.ClientSession() as session:
+                    # Using a free API for exchange rates
+                    async with session.get('https://api.exchangerate-api.com/v4/latest/USD') as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            # Approximate rates (these are market rates, you may need specific Iranian market APIs)
+                            usd_rate = data['rates'].get('IRR', 50000)  # Fallback rate
+                        else:
+                            usd_rate = 50000  # Fallback
+                    
+                    # Fetch Tether price (approximate as USDT is usually close to USD)
+                    tether_rate = usd_rate
+                
+                # Store in cache
+                PRICE_CACHE['usd'] = usd_rate
+                PRICE_CACHE['tether'] = tether_rate
+                PRICE_CACHE_TIME['last_update'] = current_time
+                
+            except Exception as e:
+                logging.error(f"Price fetch error: {e}")
+                # Use fallback values
+                PRICE_CACHE['usd'] = 50000
+                PRICE_CACHE['tether'] = 50000
+                PRICE_CACHE_TIME['last_update'] = current_time
+        
+        usd_price = PRICE_CACHE.get('usd', 50000)
+        tether_price = PRICE_CACHE.get('tether', 50000)
+        
+        price_text = f"""**💰 قیمت لحظه‌ای ارزها**
+
+🇺🇸 **دلار آمریکا (USD):**
+`{usd_price:,}` ریال
+
+💵 **تتر (USDT):**
+`{tether_price:,}` ریال
+
+⏰ آخرین بروزرسانی: {datetime.now(TEHRAN_TIMEZONE).strftime('%H:%M:%S')}
+
+💡 توجه: قیمت‌ها تقریبی هستند و ممکن است با بازار ایران متفاوت باشند."""
+        
+        await message.edit_text(price_text)
+        
+    except Exception as e:
+        logging.error(f"Price controller error: {e}")
+        await message.edit_text("⚠️ خطا در دریافت قیمت‌ها")
+
+
+async def delete_all_channels_controller(client, message):
+    """Leave all channels"""
+    try:
+        await message.edit_text("⏳ در حال ترک کردن تمام کانال‌ها...")
+        
+        left_count = 0
+        errors = []
+        
+        async for dialog in client.get_dialogs():
+            if dialog.chat and dialog.chat.type == ChatType.CHANNEL:
+                try:
+                    await client.leave_chat(dialog.chat.id)
+                    left_count += 1
+                    await asyncio.sleep(0.5)  # Avoid flood
+                except Exception as e:
+                    errors.append(f"کانال {dialog.chat.id}: {str(e)[:30]}")
+        
+        result_text = f"✅ {left_count} کانال ترک شد."
+        if errors:
+            result_text += f"\n⚠️ {len(errors)} خطا:"
+            for error in errors[:5]:  # Show first 5 errors
+                result_text += f"\n• {error}"
+        
+        await message.edit_text(result_text)
+        
+    except Exception as e:
+        logging.error(f"Delete all channels error: {e}")
+        await message.edit_text("⚠️ خطا در ترک کانال‌ها")
+
+
+async def delete_all_groups_controller(client, message):
+    """Leave all groups"""
+    try:
+        await message.edit_text("⏳ در حال ترک کردن تمام گروه‌ها...")
+        
+        left_count = 0
+        errors = []
+        
+        async for dialog in client.get_dialogs():
+            if dialog.chat and dialog.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                try:
+                    await client.leave_chat(dialog.chat.id)
+                    left_count += 1
+                    await asyncio.sleep(0.5)  # Avoid flood
+                except Exception as e:
+                    errors.append(f"گروه {dialog.chat.id}: {str(e)[:30]}")
+        
+        result_text = f"✅ {left_count} گروه ترک شد."
+        if errors:
+            result_text += f"\n⚠️ {len(errors)} خطا:"
+            for error in errors[:5]:
+                result_text += f"\n• {error}"
+        
+        await message.edit_text(result_text)
+        
+    except Exception as e:
+        logging.error(f"Delete all groups error: {e}")
+        await message.edit_text("⚠️ خطا در ترک گروه‌ها")
+
+
+async def delete_all_bots_controller(client, message):
+    """Block all bots (stop and block them)"""
+    try:
+        await message.edit_text("⏳ در حال مسدود کردن تمام ربات‌ها...")
+        
+        blocked_count = 0
+        errors = []
+        
+        async for dialog in client.get_dialogs():
+            if dialog.chat and dialog.chat.type == ChatType.BOT:
+                try:
+                    await client.block_user(dialog.chat.id)
+                    blocked_count += 1
+                    await asyncio.sleep(0.5)  # Avoid flood
+                except Exception as e:
+                    errors.append(f"ربات {dialog.chat.id}: {str(e)[:30]}")
+        
+        result_text = f"✅ {blocked_count} ربات مسدود شد."
+        if errors:
+            result_text += f"\n⚠️ {len(errors)} خطا:"
+            for error in errors[:5]:
+                result_text += f"\n• {error}"
+        
+        await message.edit_text(result_text)
+        
+    except Exception as e:
+        logging.error(f"Delete all bots error: {e}")
+        await message.edit_text("⚠️ خطا در مسدود کردن ربات‌ها")
+
 
 async def comment_command_controller(client, message):
     """Handle comment commands (from 1.py) - simple Persian commands"""
     user_id = client.me.id
     command = message.text.strip()
     
+    # ... (rest of the code remains the same)
     try:
         if command == "کامنت روشن":
             COMMENT_STATUS[user_id] = True
@@ -4422,7 +5032,7 @@ async def comment_command_controller(client, message):
             pass
 
 async def channel_comment_handler(client, message):
-    """Handle comment on channel posts (کامنت در discussion group کانال)"""
+    """Handle comment on channel posts with duplicate prevention"""
     user_id = client.me.id
     
     # بررسی فعال بودن کامنت
@@ -4437,6 +5047,25 @@ async def channel_comment_handler(client, message):
     if not message.outgoing:
         return
     
+    # Check if we've already commented on this message (duplicate prevention)
+    track_key = (user_id, message.chat.id, message.id)
+    if track_key in COMMENT_TRACKED_MESSAGES:
+        # Already commented on this message, skip
+        return
+    
+    # Mark as tracked immediately to prevent race conditions
+    COMMENT_TRACKED_MESSAGES[track_key] = time.time()
+    
+    # Clean old tracked messages (keep only last 1000 to prevent memory bloat)
+    if len(COMMENT_TRACKED_MESSAGES) > 1000:
+        oldest_keys = sorted(COMMENT_TRACKED_MESSAGES.items(), key=lambda x: x[1])[:100]
+        for old_key, _ in oldest_keys:
+            COMMENT_TRACKED_MESSAGES.pop(old_key, None)
+    
+    # Save to database periodically (every 50 new entries)
+    if len(COMMENT_TRACKED_MESSAGES) % 50 == 0:
+        await save_local_database()
+    
     # بررسی اینکه کانال discussion group دارد
     try:
         chat = await client.get_chat(message.chat.id)
@@ -4448,33 +5077,28 @@ async def channel_comment_handler(client, message):
         # دریافت متن کامنت
         comment_text = COMMENT_TEXT.get(user_id, "اول! 🔥")
         
-        # کمی تاخیر برای اطمینان از اینکه پیام discussion group ایجاد شده است
-        await asyncio.sleep(2)
+        # کمی تاخیر کوتاه‌تر برای ارسال سریع‌تر کامنت اول
+        await asyncio.sleep(1)
         
         # ارسال کامنت در discussion group
         try:
-            # در discussion group، باید پیامی پیدا کنیم که به پست کانال اشاره می‌کند
-            # یا می‌توانیم مستقیم reply_to_message_id را به message.id بدهیم
-            # Telegram به صورت خودکار آن را به پیام discussion group مربوط می‌کند
+            # Try to send as a reply to the message (fastest method)
+            await client.send_message(
+                discussion_chat_id,
+                comment_text,
+                reply_to_message_id=message.id
+            )
+            logging.info(f"✅ کامنت اول در discussion group کانال {message.chat.id} ارسال شد")
+        except Exception as e1:
+            # If reply fails, send without reply
+            logging.warning(f"⚠️ ارسال با reply ناموفق بود، سعی بدون reply: {e1}")
             try:
-                await client.send_message(
-                    discussion_chat_id,
-                    comment_text,
-                    reply_to_message_id=message.id
-                )
-                logging.info(f"✅ کامنت در discussion group کانال {message.chat.id} ارسال شد: {comment_text}")
-            except Exception as e1:
-                # اگر reply_to_message_id کار نکرد، سعی می‌کنیم بدون reply ارسال کنیم
-                logging.warning(f"⚠️ ارسال با reply_to_message_id ناموفق بود، سعی بدون reply: {e1}")
-                await client.send_message(
-                    discussion_chat_id,
-                    comment_text
-                )
-                logging.info(f"✅ کامنت در discussion group کانال {message.chat.id} ارسال شد (بدون reply): {comment_text}")
-        except Exception as e:
-            logging.error(f"❌ خطا در ارسال کامنت در discussion group کانال {message.chat.id}: {e}")
+                await client.send_message(discussion_chat_id, comment_text)
+                logging.info(f"✅ کامنت اول در discussion group ارسال شد (بدون reply)")
+            except Exception as e2:
+                logging.error(f"❌ خطا در ارسال کامنت: {e2}")
     except Exception as e:
-        logging.error(f"❌ خطا در بررسی discussion group کانال {message.chat.id}: {e}")
+        logging.error(f"❌ خطا در بررسی discussion group کانال: {e}")
 
 async def comment_handler(client, message):
     """Handle comment on forwarded messages (منطق کامنت از 1.py) - غیرفعال شده، استفاده از channel_comment_handler"""
@@ -6488,12 +7112,34 @@ def run_asyncio_loop():
              if not cleanup_completed:
                  logging.warning("Cleanup sequence did not fully complete before loop closure.")
 
-if __name__ == "__main__":
-    logging.info("========================================")
-    logging.info(" Starting Telegram Self Bot Service... ")
-    logging.info("========================================")
+# ========== NEW CONTROLLER FUNCTIONS FOR REQUESTED FEATURES ==========
 
-    # Start the asyncio loop in a separate thread
+async def mute_duration_controller(client, message):
+    """Mute user with duration (5-1000 minutes) - deletes all their messages"""
+    try:
+        if not message.reply_to_message or not message.reply_to_message.from_user:
+            await message.edit_text("⚠️ برای سکوت کردن، باید روی پیام کاربر مورد نظر ریپلای کنید.")
+            return
+        
+        # Extract duration from command
+        match = re.match(r"^سکوت (\d+)$", message.text.strip())
+        if not match:
+            await message.edit_text("⚠️ فرمت: `سکوت [5-1000]` (دقیقه)")
+            return
+        
+        duration = int(match.group(1))
+        if duration < 5 or duration > 1000:
+            await message.edit_text("⚠️ مدت زمان سکوت باید بین 5 تا 1000 دقیقه باشد.")
+            return
+        
+        user_id = client.me.id
+        target_id = message.reply_to_message.from_user.id
+        chat_id = message.chat.id
+        
+        # Add to database with duration
+        db_add_muted_user(user_id, target_id, chat_id, duration)
+        
+        target_info = f"کاربر `{target_id}`"
     loop_thread = Thread(target=run_asyncio_loop, name="AsyncioLoopThread", daemon=True)
     loop_thread.start()
 

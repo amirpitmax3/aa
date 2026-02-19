@@ -2634,14 +2634,9 @@ async def help_controller(client, message):
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 💹 قیمت و ارز 💹 ━━━━━━━━━┓
-┃ 💱 `تبدیل ارز [مبلغ] [ارز] [به ارز]`
-┃ 📊 مثال ها:
-┃    `1 دلار ریال`
-┃    `100 یورو دلار`
-┃    `1 بیت کوین دلار`
-┃    `1 ریپل دلار`
-┃    `1 طلا دلار`
-┃ 🔧 فعال/غیرفعال: `قیمت روشن` / `قیمت خاموش`
+┃ 💱 `قیمت دلار` - نرخ دلار به تومان
+┃ 💎 `قیمت طلا` - قیمت طلا به تومان
+┃ 🪙 `قیمت تتر` - نرخ تتر به تومان
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 🔇 سیستم سکوت 🔇 ━━━━━━━━━┓
@@ -2650,15 +2645,13 @@ async def help_controller(client, message):
 ┃ 📋 `لیست سکوت`
 ┃ 🧹 `پاک کن سکوت`
 ┃ ℹ️ پیام‌های سکوت شده خودکار حذف می‌شود
-┃ 🔧 فعال/غیرفعال: `سکوت روشن` / `سکوت خاموش`
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 👋 خوش‌آمدگویی 👋 ━━━━━━━━━┓
-┃ 👋 `تنظیم خوش‌آمد` (ریپلای)
-┃ 🔄 `تغییر خوش‌آمد`
-┃ 🗑 `حذف خوش‌آمد`
-┃ ℹ️ پیام خوش‌آمد برای اعضای جدید ارسال می‌شود
-┃ 🔧 فعال/غیرفعال: `خوش‌آمد روشن` / `خوش‌آمد خاموش`
+┃ 👋 `خوش‌آمد روشن` ➜ روشن کردن خوش‌آمد
+┃ 🔇 `خوش‌آمد خاموش` ➜ خاموش کردن خوش‌آمد
+┃ ℹ️ متن: سلام [نام] به گروه [نام گروه] خوش امدید 🌸
+┃ 🔧 فقط ادمین یا اونر گروه می‌تواند تنظیم کند
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━━━━━━━━ 🗑 حذف انبوهی 🗑 ━━━━━━━━━┓
@@ -3817,13 +3810,13 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str, d
         client.add_handler(MessageHandler(sticker_creator_controller, cmd_filters & filters.reply & filters.regex("^(استیکر|sticker)$")))
         
         # Mute/Unmute handlers
-        client.add_handler(MessageHandler(mute_handler, cmd_filters & filters.reply & filters.regex(r"^(سکوت کردن|mute)\s+\d+$")))
-        client.add_handler(MessageHandler(unmute_handler, cmd_filters & filters.reply & filters.regex("^(رفع سکوت|unmute)$")))
-        client.add_handler(MessageHandler(list_muted_handler, cmd_filters & filters.regex("^(لیست سکوت|list_muted)$")))
-        client.add_handler(MessageHandler(clear_muted_handler, cmd_filters & filters.regex("^(پاک کن سکوت|clear_muted)$")))
+        client.add_handler(MessageHandler(mute_handler, cmd_filters & filters.reply & filters.regex(r"^سکوت کردن\s+\d+$")))
+        client.add_handler(MessageHandler(unmute_handler, cmd_filters & filters.reply & filters.regex("^رفع سکوت$")))
+        client.add_handler(MessageHandler(list_muted_handler, cmd_filters & filters.regex("^لیست سکوت$")))
+        client.add_handler(MessageHandler(clear_muted_handler, cmd_filters & filters.regex("^پاک کن سکوت$")))
         
-        # Price conversion handler - دستورات فارسی و انگلیسی
-        client.add_handler(MessageHandler(price_converter_handler, cmd_filters & filters.regex(r"^>\s*.+")))
+        # Price conversion handler - دستورات قیمت
+        client.add_handler(MessageHandler(price_converter_handler, cmd_filters & filters.regex(r"^(قیمت دلار|قیمت طلا|قیمت تتر)")))
         
         # Welcome message handlers
         client.add_handler(MessageHandler(welcome_message_handler, cmd_filters & filters.regex(r"^(تنظیم خوش|تغییر خوش|حذف خوش|خوش.*آمد)")))
@@ -4674,14 +4667,14 @@ async def create_sticker_pack_from_text(client, text: str, user_id: int) -> str:
 
 
 async def mute_handler(client, message):
-    """Handle mute command - /mute [duration 1-1000 minutes]"""
+    """Handle mute command - سکوت کردن [تعداد دقیقه 1-1000]"""
     user_id = client.me.id
     
     try:
-        # Parse command: /mute [duration]
-        match = re.match(r'^/mute\s+(\d+)?', message.text, re.IGNORECASE)
+        # Parse command: سکوت کردن [duration]
+        match = re.match(r'^سکوت کردن\s+(\d+)?', message.text, re.IGNORECASE)
         if not match:
-            await message.edit_text("⚠️ استفاده: `/mute [تعداد دقیقه 1-1000]`")
+            await message.edit_text("⚠️ استفاده: `سکوت کردن [تعداد دقیقه 1-1000]`")
             return
         
         duration = int(match.group(1)) if match.group(1) else 5
@@ -4760,95 +4753,78 @@ async def unmute_handler(client, message):
 
 
 async def price_converter_handler(client, message):
-    """تبدیل قیمت - دستور: > 1 دلار ریال"""
+    """دریافت قیمت ارزها - قیمت دلار / قیمت طلا / قیمت تتر"""
     try:
-        text = message.text.strip()
+        command = message.text.strip().lower()
         
-        # حذف دستور اگر وجود داشت
-        if text.startswith('>'):
-            text = text[1:].strip()
-        
-        parts = text.split()
-        
-        if len(parts) < 3:
+        # Handle price commands
+        if 'قیمت دلار' in command:
+            currency = 'usd'
+            currency_name = 'دلار'
+        elif 'قیمت طلا' in command:
+            currency = 'xau'
+            currency_name = 'طلا'
+        elif 'قیمت تتر' in command:
+            currency = 'usdt'
+            currency_name = 'تتر'
+        else:
+            # معلومات درباره دستورات
             await message.reply(
-                "❌ **استفاده:** `> 1 دلار ریال`\n\n"
-                "📊 **مثال‌ها:**\n"
-                "`> 1 دلار ریال`\n"
-                "`> 100 یورو دلار`\n"
-                "`> 1 طلا تومان`\n"
-                "`> 1 تتر دلار`\n"
-                "`> 1 بیت کوین دلار`"
+                "❌ دستور نامعلوم\n\n"
+                "**دستورات قیمت:**\n"
+                "`قیمت دلار` - نرخ دلار به تومان\n"
+                "`قیمت طلا` - قیمت طلا به تومان\n"
+                "`قیمت تتر` - نرخ تتر به تومان"
             )
             return
         
-        try:
-            amount = float(parts[0])
-        except ValueError:
-            await message.reply("❌ مبلغ معتبر نیست")
-            return
-        
-        from_currency = ' '.join(parts[1:-1]).lower()
-        to_currency = parts[-1].lower()
-        
-        # نگاشت اسامی فارسی
-        currency_map = {
-            'دلار': 'usd',
-            'یورو': 'eur',
-            'پوند': 'gbp',
-            'ریال': 'irr',
-            'تومان': 'irr',
-            'طلا': 'xau',
-            'نقره': 'xag',
-            'تتر': 'usdt',
-            'بیت کوین': 'btc',
-            'اتریوم': 'eth',
-            'ریپل': 'xrp',
-            'ارز دیجیتال': 'crypto'
-        }
-        
-        # تبدیل نام‌های فارسی به انگلیسی
-        from_cur_code = currency_map.get(from_currency, from_currency.upper())
-        to_cur_code = currency_map.get(to_currency, to_currency.upper())
-        
-        status = await message.reply(f"⏳ درحال دریافت نرخ {from_currency} به {to_currency}...")
+        status = await message.reply(f"⏳ درحال دریافت قیمت {currency_name}...")
         
         try:
             async with aiohttp.ClientSession() as session:
-                # سعی برای دریافت از CoinGecko برای ارزهای دیجیتال
-                if from_cur_code.lower() in ['btc', 'eth', 'xrp', 'usdt'] or to_cur_code.lower() in ['btc', 'eth', 'xrp', 'usdt']:
-                    url = f"https://api.coingecko.com/api/v3/simple/price?ids={from_cur_code.lower()}&vs_currencies={to_cur_code.lower()}"
+                # دریافت قیمت از API
+                if currency in ['xau', 'usdt']:
+                    # برای طلا و تتر از CoinGecko
+                    url = f"https://api.coingecko.com/api/v3/simple/price?ids={'gold' if currency == 'xau' else 'tether'}&vs_currencies=usd"
                     
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            if from_cur_code.lower() in data:
-                                rate = data[from_cur_code.lower()].get(to_cur_code.lower())
-                                if rate:
-                                    result = amount * rate
-                                    await status.edit_text(
-                                        f"💹 **تبدیل قیمت**\n\n"
-                                        f"{amount:,.2f} {from_currency} = {result:,.2f} {to_currency}"
-                                    )
-                                    return
-                
-                # سعی برای دریافت از API نرخ ارز
-                if from_cur_code.upper() in ['USD', 'EUR', 'GBP', 'IRR', 'JPY', 'CNY']:
-                    url = f"https://api.exchangerate-api.com/v4/latest/{from_cur_code.upper()}"
-                    
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if 'rates' in data and to_cur_code.upper() in data['rates']:
-                                rate = data['rates'][to_cur_code.upper()]
-                                result = amount * rate
+                            if currency == 'xau' and 'gold' in data:
+                                price_usd = data['gold'].get('usd')
+                            elif currency == 'usdt' and 'tether' in data:
+                                price_usd = data['tether'].get('usd')
+                            else:
+                                price_usd = None
+                            
+                            if price_usd:
+                                # تبدیل به تومان (نرخ تقریبی)
+                                price_irr = price_usd * 42000  # نرخ تقریبی دلار
                                 await status.edit_text(
-                                    f"💹 **تبدیل قیمت**\n\n"
-                                    f"{amount:,.2f} {from_currency} = {result:,.2f} {to_currency}"
+                                    f"💹 **قیمت {currency_name}**\n\n"
+                                    f"💵 1 {currency_name} = {price_usd:,.2f} USD\n"
+                                    f"🇮🇷 1 {currency_name} = {price_irr:,.0f} تومان"
                                 )
                                 return
                 
-                await status.edit_text(f"❌ نتوانستم نرخ `{from_currency}` به `{to_currency}` را دریافت کنم")
+                # برای دلار از ExchangeRate API
+                if currency == 'usd':
+                    url = "https://api.exchangerate-api.com/v4/latest/usd"
+                    
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if 'rates' in data:
+                                # دریافت نرخ ایران (اگر موجود باشد)
+                                price_irr = data['rates'].get('irr', None)
+                                if price_irr:
+                                    await status.edit_text(
+                                        f"💹 **قیمت دلار**\n\n"
+                                        f"💵 1 USD = {price_irr:,.0f} تومان"
+                                    )
+                                    return
+                
+                await status.edit_text(f"❌ نتوانستم قیمت {currency_name} را دریافت کنم")
         
         except asyncio.TimeoutError:
             await status.edit_text("❌ زمان انتظار تمام شد")
@@ -4859,109 +4835,71 @@ async def price_converter_handler(client, message):
     except Exception as e:
         logging.error(f"Price handler error: {e}")
         await message.reply(f"❌ خطا: {str(e)[:50]}")
-    
-    except Exception as e:
-        logging.error(f"Price converter handler error: {e}")
-        await message.edit_text(f"⚠️ خطا: {e}")
 
 
 async def welcome_message_handler(client, message):
-    """Handle welcome message setup"""
+    """خوش‌آمد - فقط روشن/خاموش"""
     user_id = client.me.id
     command = message.text.lower()
+    chat_id = message.chat.id
     
     try:
-        # بررسی نوع دستور
-        if 'تنظیم خوش' in command or 'تنظیم' in command:
-            # تنظیم خوش‌آمد - ریپلای برای گرفتن پیام
-            if not message.reply_to_message:
-                await message.edit_text("⚠️ روی متن، عکس یا فیلم ریپلای کنید")
+        # بررسی اینکه ربات ادمین یا اونر گروه است
+        try:
+            chat_member = await client.get_chat_member(chat_id, user_id)
+            is_admin = chat_member.status in ['administrator', 'creator']
+            if not is_admin:
+                await message.edit_text("⚠️ فقط ادمین یا اونر گروه می‌تواند خوش‌آمد را تنظیم کند")
                 return
-            
+        except Exception as e:
+            logging.warning(f"Could not check admin status: {e}")
+            await message.edit_text("⚠️ نتوانستم وضعیت ادمین را بررسی کنم")
+            return
+        
+        # روشن کردن خوش‌آمد
+        if 'خوش‌آمد روشن' in command or 'خوش آمد روشن' in command or 'خوش‌آمد روشن' in command:
             if user_id not in WELCOME_MESSAGE_CONFIG:
                 WELCOME_MESSAGE_CONFIG[user_id] = {}
             
+            # متن ثابت - هر کاربر و هر گروه متفاوت
             config = {
                 'enabled': True,
-                'text': message.reply_to_message.text or message.reply_to_message.caption or 'خوش آمدید!',
+                'text': 'WELCOME_MESSAGE_TEMPLATE'  # نشانه‌ای برای شناخت
             }
             
-            if message.reply_to_message.photo:
-                photo = message.reply_to_message.photo[-1]
-                config['photo'] = photo.file_id
-            elif message.reply_to_message.video:
-                config['video'] = message.reply_to_message.video.file_id
-            
-            WELCOME_MESSAGE_CONFIG[user_id][message.chat.id] = config
+            WELCOME_MESSAGE_CONFIG[user_id][chat_id] = config
             
             if welcome_messages_collection is not None:
                 try:
                     welcome_messages_collection.update_one(
-                        {'user_id': user_id, 'chat_id': message.chat.id},
+                        {'user_id': user_id, 'chat_id': chat_id},
                         {'$set': config},
                         upsert=True
                     )
                 except Exception as db_err:
                     logging.warning(f"DB welcome save failed: {db_err}")
             
-            await message.edit_text("✅ پیام خوش‌آمد تنظیم شد")
+            await message.edit_text("✅ خوش‌آمد روشن شد")
         
-        elif 'تغییر خوش' in command or 'حذف خوش' in command or 'خاموش' in command:
-            # تغییر/حذف خوش‌آمد
-            if user_id in WELCOME_MESSAGE_CONFIG and message.chat.id in WELCOME_MESSAGE_CONFIG[user_id]:
-                if 'حذف' in command or 'خاموش' in command:
-                    WELCOME_MESSAGE_CONFIG[user_id].pop(message.chat.id, None)
-                    if welcome_messages_collection is not None:
-                        try:
-                            welcome_messages_collection.delete_one({
-                                'user_id': user_id,
-                                'chat_id': message.chat.id
-                            })
-                        except Exception as db_err:
-                            logging.warning(f"DB welcome delete failed: {db_err}")
-                    await message.edit_text("✅ پیام خوش‌آمد حذف شد")
-                else:
-                    # تغییر - هنوز نیاز به ریپلای دارد
-                    if not message.reply_to_message:
-                        await message.edit_text("⚠️ روی متن، عکس یا فیلم ریپلای کنید")
-                        return
-                    
-                    config = WELCOME_MESSAGE_CONFIG[user_id][message.chat.id]
-                    config['text'] = message.reply_to_message.text or message.reply_to_message.caption or config.get('text', '')
-                    
-                    if message.reply_to_message.photo:
-                        config['photo'] = message.reply_to_message.photo[-1].file_id
-                    elif message.reply_to_message.video:
-                        config['video'] = message.reply_to_message.video.file_id
-                    
-                    if welcome_messages_collection is not None:
-                        try:
-                            welcome_messages_collection.update_one(
-                                {'user_id': user_id, 'chat_id': message.chat.id},
-                                {'$set': config}
-                            )
-                        except Exception as db_err:
-                            logging.warning(f"DB welcome update failed: {db_err}")
-                    
-                    await message.edit_text("✅ پیام خوش‌آمد تغییر یافت")
-            else:
-                await message.edit_text("⚠️ پیام خوش‌آمد تعریف نشده است")
-        
-        elif 'روشن' in command:
-            # روشن کردن خوش‌آمد
-            if user_id in WELCOME_MESSAGE_CONFIG and message.chat.id in WELCOME_MESSAGE_CONFIG[user_id]:
-                WELCOME_MESSAGE_CONFIG[user_id][message.chat.id]['enabled'] = True
+        # خاموش کردن خوش‌آمد
+        elif 'خوش‌آمد خاموش' in command or 'خوش آمد خاموش' in command:
+            if user_id in WELCOME_MESSAGE_CONFIG and chat_id in WELCOME_MESSAGE_CONFIG[user_id]:
+                WELCOME_MESSAGE_CONFIG[user_id][chat_id]['enabled'] = False
+                
                 if welcome_messages_collection is not None:
                     try:
                         welcome_messages_collection.update_one(
-                            {'user_id': user_id, 'chat_id': message.chat.id},
-                            {'$set': {'enabled': True}}
+                            {'user_id': user_id, 'chat_id': chat_id},
+                            {'$set': {'enabled': False}}
                         )
                     except Exception as db_err:
                         logging.warning(f"DB welcome toggle failed: {db_err}")
-                await message.edit_text("✅ پیام خوش‌آمد روشن شد")
+                
+                await message.edit_text("✅ خوش‌آمد خاموش شد")
             else:
-                await message.edit_text("⚠️ پیام خوش‌آمد تعریف نشده است")
+                await message.edit_text("⚠️ خوش‌آمد فعال نیست")
+        else:
+            await message.edit_text("❌ دستور نامعلوم\n\n**دستورات:**\n`خوش‌آمد روشن`\n`خوش‌آمد خاموش`")
     
     except Exception as e:
         logging.error(f"Welcome message handler error: {e}")
@@ -4969,11 +4907,11 @@ async def welcome_message_handler(client, message):
 
 
 async def new_member_welcome_handler(client, message):
-    """Handle new member welcome (triggered by new_chat_members service message)"""
+    """Handle new member welcome with dynamic names - متن ثابت"""
     user_id = client.me.id
     
     try:
-        # Only if we're admin and have configured welcome
+        # Check if welcome is enabled
         if user_id not in WELCOME_MESSAGE_CONFIG:
             return
         
@@ -4987,28 +4925,17 @@ async def new_member_welcome_handler(client, message):
         
         for new_member in message.new_chat_members:
             try:
-                welcome_text = config.get('text', f"خوش آمدی {new_member.mention}!")
+                # ساخت متن خوش‌آمد با اسم فرد و گروه
+                chat_title = message.chat.title or "گروه"
+                member_name = new_member.first_name or "دوست"
                 
-                if 'photo' in config:
-                    await client.send_photo(
-                        message.chat.id,
-                        config['photo'],
-                        caption=welcome_text,
-                        reply_to_message_id=message.id
-                    )
-                elif 'video' in config:
-                    await client.send_video(
-                        message.chat.id,
-                        config['video'],
-                        caption=welcome_text,
-                        reply_to_message_id=message.id
-                    )
-                else:
-                    await client.send_message(
-                        message.chat.id,
-                        welcome_text,
-                        reply_to_message_id=message.id
-                    )
+                welcome_text = f"سلام {member_name}\nبه گروه {chat_title} خوش امدید 🌸"
+                
+                await client.send_message(
+                    message.chat.id,
+                    welcome_text,
+                    reply_to_message_id=message.id
+                )
                 
                 logging.info(f"✅ پیام خوش‌آمد برای {new_member.username or new_member.id} ارسال شد")
             except Exception as e:
@@ -5078,22 +5005,29 @@ async def bulk_delete_handler(client, message):
             status = await message.reply("⏳ درحال بلاک کردن تمام بات‌ها...")
             deleted_count = 0
             failed_count = 0
+            blocked_bots = set()
             
             try:
                 async for dialog in client.get_dialogs():
                     if dialog.chat and dialog.chat.type == ChatType.PRIVATE:
                         try:
+                            user_id = dialog.chat.id
+                            # Skip if already processed
+                            if user_id in blocked_bots:
+                                continue
+                            
                             # بررسی اینکه بات است یا نه
-                            user = await client.get_users(dialog.chat.id)
-                            if user and getattr(user, 'is_bot', False):
-                                await client.block_user(dialog.chat.id)
+                            user = await client.get_users(user_id)
+                            if user and user.is_bot:
+                                await client.block_user(user_id)
                                 deleted_count += 1
-                                logging.info(f"Blocked bot: {user.first_name} ({dialog.chat.id})")
+                                blocked_bots.add(user_id)
+                                logging.info(f"Blocked bot: {user.first_name} ({user_id})")
                         except Exception as e:
-                            logging.warning(f"Could not block bot {dialog.chat.id}: {e}")
                             failed_count += 1
+                            logging.warning(f"Could not block bot {dialog.chat.id}: {e}")
                         
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.1)
             except Exception as e:
                 logging.error(f"Error getting dialogs: {e}")
             

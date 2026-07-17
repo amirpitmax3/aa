@@ -121,3 +121,9 @@ async def run_ai(request: Request):
         raise HTTPException(504, "Cloudflare AI request timed out")
     except httpx.HTTPError:
         raise HTTPException(502, "Could not reach Cloudflare AI")
+
+
+# Allows Render's default `python main.py` start command to work too.
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "10000")))

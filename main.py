@@ -11,11 +11,14 @@ Security note:
 import base64
 import hashlib
 import os
+import subprocess
+import tempfile
 import time
 from collections import defaultdict, deque
 
 import edge_tts
 import httpx
+import imageio_ffmpeg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -115,22 +118,83 @@ async def text_to_speech(request: Request):
         # Only the intended Persian male voice is accepted in the public no-secret mode.
         if voice != "fa-IR-FaridNeural":
             voice = "fa-IR-FaridNeural"
-        communicate = edge_tts.Communicate(
-            text,
-            voice=voice,
-            output_format="ogg-24khz-16bit-mono-opus",
-        )
-        audio = bytearray()
+        # edge-tts returns MP3 in this version. Convert it to OGG/Opus so Telegram
+        # displays a real voice message rather than a music/audio file.
+        communicate = edge_tts.Communicate(text, voice=voice)
+        mp3_audio = bytearray()
         async for chunk in communicate.stream():
             if chunk.get("type") == "audio":
-                audio.extend(chunk.get("data", b""))
-        if not audio:
+                mp3_audio.extend(chunk.get("data", b""))
+        if not mp3_audio:
             raise HTTPException(502, "TTS returned no audio")
-        return JSONResponse({"success": True, "audio": base64.b64encode(bytes(audio)).decode("ascii")})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = os.path.join(temp_dir, "speech.mp3")
+            target = os.path.join(temp_dir, "speech.ogg")
+            with open(source, "wb") as f:
+                f.write(mp3_audio)
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            converted = subprocess.run(
+                [ffmpeg, "-y", "-i", source, "-c:a", "libopus", "-b:a", "32k", target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                check=False,
+            )
+            if converted.returncode != 0 or not os.path.exists(target):
+                raise HTTPException(502, "TTS audio conversion failed")
+            with open(target, "rb") as f:
+                ogg_audio = f.read()
+        return JSONResponse({"success": True, "audio": base64.b64encode(ogg_audio).decode("ascii")})
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(502, f"TTS error: {str(error)[:180]}")
+
+
+@app.post("/openai-image")
+async def openai_image(request: Request):
+    """Generate or edit one image using the caller's own OpenAI API key."""
+    if not _authorized(request):
+        raise HTTPException(403, "Unauthorized proxy request")
+    data = await request.json()
+    api_key = str(data.get("api_key", "")).strip()
+    prompt = str(data.get("prompt", "")).strip()
+    image_b64 = str(data.get("image_b64", "")).strip()
+    image_mime = str(data.get("image_mime", "image/jpeg")).strip()
+    if len(api_key) < 20 or not api_key.startswith("sk-"):
+        raise HTTPException(400, "Invalid OpenAI API key")
+    if not prompt or len(prompt) > 3000:
+        raise HTTPException(400, "Prompt must be between 1 and 3000 characters")
+    _rate_allowed(hashlib.sha256(api_key.encode()).hexdigest())
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            if image_b64:
+                try:
+                    image_bytes = base64.b64decode(image_b64)
+                except Exception:
+                    raise HTTPException(400, "Invalid image payload")
+                if len(image_bytes) > 12 * 1024 * 1024:
+                    raise HTTPException(400, "Image is too large")
+                upstream = await client.post(
+                    "https://api.openai.com/v1/images/edits",
+                    headers=headers,
+                    data={"model": "gpt-image-1", "prompt": prompt, "size": "1024x1024", "quality": "medium"},
+                    files={"image": ("source.jpg", image_bytes, image_mime)},
+                )
+            else:
+                upstream = await client.post(
+                    "https://api.openai.com/v1/images/generations",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={"model": "gpt-image-1", "prompt": prompt, "size": "1024x1024", "quality": "medium", "n": 1},
+                )
+        return _safe_response(upstream)
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(504, "OpenAI image request timed out")
+    except httpx.HTTPError:
+        raise HTTPException(502, "Could not reach OpenAI image API")
 
 
 @app.post("/run")

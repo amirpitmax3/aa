@@ -29,6 +29,7 @@ ALLOWED_MODELS = {
     "@cf/meta/llama-4-scout-17b-16e-instruct",
     "@cf/meta/llama-3.1-8b-instruct-fast",
     "@cf/black-forest-labs/flux-1-schnell",
+    "@cf/black-forest-labs/flux-2-klein-4b",
     "@cf/openai/whisper-large-v3-turbo",
 }
 # Per Cloudflare account, not per source IP: all Hugging Face users may share one IP.
@@ -115,12 +116,13 @@ async def text_to_speech(request: Request):
         raise HTTPException(400, "Text must be between 1 and 1200 characters")
     try:
         voice = str(data.get("voice") or "fa-IR-FaridNeural")
-        # Only the intended Persian male voice is accepted in the public no-secret mode.
-        if voice != "fa-IR-FaridNeural":
+        if voice not in {"fa-IR-FaridNeural", "fa-IR-DilaraNeural"}:
             voice = "fa-IR-FaridNeural"
+        rate = str(data.get("rate") or "+0%")
+        pitch = str(data.get("pitch") or "+0Hz")
         # edge-tts returns MP3 in this version. Convert it to OGG/Opus so Telegram
         # displays a real voice message rather than a music/audio file.
-        communicate = edge_tts.Communicate(text, voice=voice)
+        communicate = edge_tts.Communicate(text, voice=voice, rate=rate, pitch=pitch)
         mp3_audio = bytearray()
         async for chunk in communicate.stream():
             if chunk.get("type") == "audio":
@@ -213,20 +215,36 @@ async def run_ai(request: Request):
         raise HTTPException(400, "Invalid chat payload")
     if model == "@cf/black-forest-labs/flux-1-schnell" and not str(payload.get("prompt", "")).strip():
         raise HTTPException(400, "Image prompt is required")
+    if model == "@cf/black-forest-labs/flux-2-klein-4b":
+        if not str(payload.get("prompt", "")).strip() or not str(payload.get("input_image_b64", "")).strip():
+            raise HTTPException(400, "Image edit prompt and input image are required")
     if model == "@cf/openai/whisper-large-v3-turbo" and not str(payload.get("audio", "")).strip():
         raise HTTPException(400, "Audio is required")
     _rate_allowed(account_id)
 
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            upstream = await client.post(
-                f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
-                headers={
-                    "Authorization": f"Bearer {api_token}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        async with httpx.AsyncClient(timeout=90) as client:
+            endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+            headers = {"Authorization": f"Bearer {api_token}"}
+            if model == "@cf/black-forest-labs/flux-2-klein-4b":
+                try:
+                    source = base64.b64decode(payload["input_image_b64"])
+                except Exception:
+                    raise HTTPException(400, "Invalid input image")
+                if len(source) > 2 * 1024 * 1024:
+                    raise HTTPException(400, "Input image is too large")
+                upstream = await client.post(
+                    endpoint,
+                    headers=headers,
+                    data={"prompt": str(payload["prompt"]), "width": "1024", "height": "1024"},
+                    files={"input_image_0": ("source.jpg", source, str(payload.get("input_image_mime") or "image/jpeg"))},
+                )
+            else:
+                upstream = await client.post(
+                    endpoint,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=payload,
+                )
         return _safe_response(upstream)
     except httpx.TimeoutException:
         raise HTTPException(504, "Cloudflare AI request timed out")
